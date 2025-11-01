@@ -704,10 +704,15 @@ Here is the source material:
     return this.getNextAvailableKey();
   }
 
-  private async loadDefaultSources() {
+  // 소스 목록을 동적으로 로드하는 메서드 (public으로 노출하여 App.tsx에서도 호출 가능)
+  async loadDefaultSources() {
     try {
       // manifest.json에서 PDF 파일 목록을 동적으로 로드
-      const manifestUrl = '/chat6v/pdf/manifest.json';
+      // 개발 환경과 프로덕션 환경 모두 지원
+      const isDevelopment = typeof window !== 'undefined' && 
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
+      const manifestUrl = `${basePath}/manifest.json`;
       console.log('Loading PDF sources from manifest:', manifestUrl);
       
       const response = await fetch(manifestUrl);
@@ -718,10 +723,16 @@ Here is the source material:
       }
       
       const pdfFiles = await response.json();
-      console.log('Found PDF files in manifest:', pdfFiles);
+      console.log('✅ Found PDF files in manifest:', pdfFiles);
       
-      if (!Array.isArray(pdfFiles) || pdfFiles.length === 0) {
-        console.warn('No PDF files found in manifest.json');
+      if (!Array.isArray(pdfFiles)) {
+        console.error('❌ manifest.json 형식이 올바르지 않습니다. 배열이 아닙니다:', typeof pdfFiles);
+        this.sources = [];
+        return;
+      }
+      
+      if (pdfFiles.length === 0) {
+        console.warn('⚠️ No PDF files found in manifest.json');
         this.sources = [];
         return;
       }
@@ -740,7 +751,8 @@ Here is the source material:
         };
       });
 
-      console.log('Dynamic sources loaded:', this.sources);
+      console.log(`✅ Dynamic sources loaded: ${this.sources.length}개 파일`);
+      console.log('📄 소스 파일 목록:', this.sources.map(s => s.title));
     } catch (error) {
       console.error('Failed to load sources from manifest:', error);
       this.sources = [];
@@ -1076,13 +1088,17 @@ Here is the source material:
     try {
       console.log('🚀 Initializing PDF sources...');
       
-      // 0. 소스 목록을 동적으로 로드
+      // 0. 소스 목록을 동적으로 로드 (항상 먼저 실행 - UI에 표시하기 위함)
       await this.loadDefaultSources();
+      console.log(`✅ 소스 목록 로드 완료: ${this.sources.length}개 파일`);
       
       // 1. Firestore에서 데이터 로드 시도 (최우선)
       const firestoreText = await this.loadFromFirestore();
       if (firestoreText) {
         console.log('Firestore 데이터 사용 완료');
+        // Firestore 데이터를 사용하더라도 소스 목록은 이미 로드됨
+        this.isInitialized = true;
+        this.isInitializing = false;
         return;
       }
       
@@ -1319,7 +1335,12 @@ Here is the source material:
    */
   private async getPDFFileList(): Promise<string[]> {
     try {
-      const response = await fetch('/pdf/manifest.json');
+      // 개발 환경과 프로덕션 환경 모두 지원
+      const isDevelopment = typeof window !== 'undefined' && 
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
+      const manifestUrl = `${basePath}/manifest.json`;
+      const response = await fetch(manifestUrl);
       if (!response.ok) {
         throw new Error(`Manifest 로드 실패: ${response.status}`);
       }
@@ -1504,6 +1525,37 @@ Here is the source material:
     }
   }
 
+  // ✅ 개선된 페이지 번호 계산 함수 (텍스트 위치 기반, 오프셋 및 경계 처리 포함)
+  private calculatePageNumber(textPosition: number, totalTextLength: number, totalPages: number, chunkLength: number = 0): number {
+    if (totalPages === 0 || totalTextLength === 0) return 1;
+    
+    // ✅ 청크의 시작, 중간, 끝 지점 모두 계산하여 가장 적절한 페이지 선택
+    const startRatio = Math.min(textPosition / totalTextLength, 1.0);
+    const centerRatio = Math.min((textPosition + chunkLength / 2) / totalTextLength, 1.0);
+    const endRatio = Math.min((textPosition + chunkLength) / totalTextLength, 1.0);
+    
+    // ✅ 각 지점별 페이지 번호 계산 (Math.ceil 사용)
+    const startPage = Math.max(1, Math.min(Math.ceil(startRatio * totalPages), totalPages));
+    const centerPage = Math.max(1, Math.min(Math.ceil(centerRatio * totalPages), totalPages));
+    const endPage = Math.max(1, Math.min(Math.ceil(endRatio * totalPages), totalPages));
+    
+    // ✅ 청크의 대부분이 속한 페이지를 선택 (끝 지점 우선, 그 다음 중간, 그 다음 시작)
+    // 이렇게 하면 경계 근처 청크도 올바른 페이지에 할당됨
+    let pageNumber = endPage; // 끝 지점 기준이 가장 정확
+    
+    // ✅ 청크가 여러 페이지에 걸쳐있는 경우, 끝 페이지 선택
+    // 하지만 청크가 짧고 시작 지점이 더 정확한 페이지에 있다면 그것을 사용
+    if (chunkLength < 500 && startPage === endPage - 1) {
+      // 짧은 청크가 페이지 경계에 걸쳐있는 경우, 시작 페이지 사용
+      pageNumber = startPage;
+    } else {
+      // 긴 청크나 대부분의 내용이 있는 페이지 선택
+      pageNumber = Math.max(centerPage, endPage);
+    }
+    
+    return pageNumber;
+  }
+
   // Firestore에서 데이터 로드 (최우선)
   async loadFromFirestore(): Promise<string | null> {
     try {
@@ -1532,28 +1584,62 @@ Here is the source material:
         const docChunks = await this.firestoreService.getChunksByDocument(doc.id);
         console.log(`🔍 ${doc.filename}에서 ${docChunks.length}개 청크 발견`);
         
+        // ✅ 전체 텍스트 길이 계산 (청크의 endPos 최대값 사용)
+        const totalTextLength = docChunks.length > 0
+          ? Math.max(...docChunks.map(c => c.metadata?.endPos || 0))
+          : doc.totalSize || 1; // 문서의 totalSize 사용 또는 기본값
+        
+        // ✅ 문서의 총 페이지 수
+        const totalPages = doc.totalPages || 0;
+        
         // Firestore 청크를 Chunk 형식으로 변환
-        const convertedChunks = docChunks.map(firestoreChunk => ({
-          id: firestoreChunk.id || '',
-          content: firestoreChunk.content,
-          metadata: {
-            source: doc.filename,
-            title: doc.title,
-            page: firestoreChunk.metadata.page,
-            section: firestoreChunk.metadata.section,
-            position: firestoreChunk.metadata.position,
-            startPosition: firestoreChunk.metadata.startPos,
-            endPosition: firestoreChunk.metadata.endPos,
-            originalSize: firestoreChunk.metadata.originalSize,
-            documentType: this.getDocumentType(doc.filename)
-          },
-          keywords: firestoreChunk.keywords,
-          location: {
-            document: doc.filename,
-            section: firestoreChunk.metadata.section,
-            page: firestoreChunk.metadata.page
+        const convertedChunks = docChunks.map(firestoreChunk => {
+          // ✅ Firestore에 정확한 페이지 정보가 저장되어 있으므로 그대로 사용
+          // 우선순위: pageIndex > page > logicalPageNumber
+          let pageIndex = firestoreChunk.metadata.pageIndex || firestoreChunk.metadata.page;
+          const logicalPageNumber = firestoreChunk.metadata.logicalPageNumber;
+          
+          // page 정보가 없거나 0인 경우에만 폴백 계산 (하지만 이제는 거의 발생하지 않음)
+          if (!pageIndex || pageIndex === 0) {
+            // ⚠️ Firestore 데이터에 페이지 정보가 없는 경우 (구버전 데이터)
+            // 위치 기반으로 임시 계산 (되도록 사용하지 않음)
+            const textPosition = firestoreChunk.metadata?.startPos || 0;
+            const chunkLength = firestoreChunk.metadata?.endPos 
+              ? firestoreChunk.metadata.endPos - firestoreChunk.metadata.startPos 
+              : firestoreChunk.metadata?.originalSize || firestoreChunk.content.length || 0;
+            if (totalPages > 0 && totalTextLength > 0) {
+              pageIndex = this.calculatePageNumber(textPosition, totalTextLength, totalPages, chunkLength);
+              console.warn(`⚠️ 페이지 정보 보완 (구버전 데이터): 청크 ${firestoreChunk.id}, 계산된 페이지 ${pageIndex}`);
+            } else {
+              pageIndex = 1; // 기본값
+            }
           }
-        }));
+          
+          return {
+            id: firestoreChunk.id || '',
+            content: firestoreChunk.content,
+            metadata: {
+              source: doc.filename,
+              title: doc.title,
+              page: pageIndex, // 뷰어 인덱스 (하위 호환성)
+              pageIndex: pageIndex, // 뷰어 인덱스 (PDF.js와 호환)
+              logicalPageNumber: logicalPageNumber || pageIndex, // 논리적 페이지 번호
+              section: firestoreChunk.metadata.section,
+              position: firestoreChunk.metadata.position,
+              startPosition: firestoreChunk.metadata.startPos,
+              endPosition: firestoreChunk.metadata.endPos,
+              originalSize: firestoreChunk.metadata.originalSize,
+              documentType: this.getDocumentType(doc.filename)
+            },
+            keywords: firestoreChunk.keywords,
+            location: {
+              document: doc.filename,
+              section: firestoreChunk.metadata.section,
+              page: pageIndex, // 뷰어 인덱스 (PDF 뷰어에서 사용)
+              logicalPageNumber: logicalPageNumber || pageIndex // 논리적 페이지 번호
+            }
+          };
+        });
         
         chunks.push(...convertedChunks);
       }
@@ -1593,7 +1679,10 @@ Here is the source material:
   // 실제 PDF 파일들을 파싱하여 소스 텍스트 생성 (최적화된 버전)
   async loadPdfSourcesOptimized(): Promise<string> {
     // public 폴더에서 PDF 파일들 로드
-    const PDF_BASE_URL = '/chat6v/pdf/';
+    // 개발 환경과 프로덕션 환경 모두 지원
+    const isDevelopment = typeof window !== 'undefined' && 
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const PDF_BASE_URL = isDevelopment ? '/pdf/' : '/chat7v/pdf/';
     
     try {
       console.log('Attempting to load PDF sources from:', PDF_BASE_URL);
@@ -1877,17 +1966,42 @@ Here is the source material:
                 console.warn('⚠️ 문서를 찾을 수 없음:', documentId);
               }
               
+              // ✅ page 정보가 없으면 위치 기반으로 계산
+              let pageNumber = chunk.metadata?.page;
+              if (!pageNumber || pageNumber === 0) {
+                if (matchingDoc && matchingDoc.totalPages > 0) {
+                  const textPosition = chunk.metadata?.startPosition || 0;
+                  const chunkLength = chunk.metadata?.endPosition && chunk.metadata?.startPosition
+                    ? chunk.metadata.endPosition - chunk.metadata.startPosition
+                    : chunk.metadata?.originalSize || chunk.content.length || 0;
+                  // 전체 텍스트 길이는 문서의 totalSize 사용 또는 근사값
+                  const estimatedTotalLength = matchingDoc.totalSize || (textPosition * 2);
+                  if (estimatedTotalLength > 0) {
+                    pageNumber = this.calculatePageNumber(textPosition, estimatedTotalLength, matchingDoc.totalPages, chunkLength);
+                    console.log(`📄 chunkReferences page 정보 보완: 청크 ${chunk.id}, 위치 ${textPosition}, 청크길이 ${chunkLength}, 계산된 페이지 ${pageNumber}`);
+                  } else {
+                    pageNumber = 1;
+                  }
+                } else {
+                  pageNumber = 1; // 기본값
+                }
+              }
+              
               return {
                 chunkId: chunk.id,
                 documentId,
                 documentTitle: matchingDoc?.title || chunk.metadata?.title || '',
-                page: chunk.metadata?.page,
+                page: pageNumber, // ✅ 계산된 또는 기존 page 정보
                 section: chunk.metadata?.section,
                 content: chunk.content,
+                // ✅ filename 추가 (Message.tsx에서 사용)
+                filename: matchingDoc?.filename || chunk.metadata?.source || chunk.location?.document || '',
+                documentFilename: matchingDoc?.filename || '', // ✅ 추가: 별칭
                 metadata: {
                   startPos: chunk.metadata?.startPosition || 0,
                   endPos: chunk.metadata?.endPosition || 0,
-                  position: chunk.metadata?.position || 0
+                  position: chunk.metadata?.position || 0,
+                  source: matchingDoc?.filename || chunk.metadata?.source || '' // ✅ 추가
                 }
               };
             })

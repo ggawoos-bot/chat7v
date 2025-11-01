@@ -129,7 +129,10 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
         const documentId = chunk.documentId || chunk.id || '';
         const chunkId = chunk.chunkId || chunk.chunk_id || '';
         const title = chunk.documentTitle || chunk.title || '';
-        const page = chunk.page || chunk.metadata?.page;
+        // 페이지 정보 우선순위: pageIndex > page > logicalPageNumber
+        // PDF 뷰어에서는 뷰어 인덱스(pageIndex)를 사용해야 정확함
+        const page = chunk.metadata?.pageIndex || chunk.page || chunk.metadata?.page || chunk.metadata?.logicalPageNumber;
+        const logicalPageNumber = chunk.metadata?.logicalPageNumber || chunk.page || chunk.metadata?.page;
         const filename = chunk.filename || chunk.documentFilename || chunk.metadata?.source || '';
         
         // ✅ 해당 답변에 해당하는 질문 찾기 (현재 메시지 이전의 user 메시지)
@@ -150,6 +153,7 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
           chunkId,
           title,
           page,
+          logicalPageNumber,
           filename,
           questionContent
         });
@@ -160,15 +164,18 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
           return; // 이벤트를 발생시키지 않음
         }
         
-        // 커스텀 이벤트 발생 (PDF 파일명 및 질문 내용 추가)
+        // 커스텀 이벤트 발생 (PDF 파일명 및 질문 내용, 하이라이트용 키워드 추가)
         window.dispatchEvent(new CustomEvent('referenceClick', {
           detail: {
             documentId,
             chunkId,
             title,
-            page,
+            page, // 뷰어 인덱스 (PDF.js 페이지 번호)
+            logicalPageNumber, // 논리적 페이지 번호 (문서에 인쇄된 번호)
             filename, // ✅ PDF 파일명 추가
-            questionContent // ✅ 질문 내용 추가
+            questionContent, // ✅ 질문 내용 추가
+            chunkContent: chunk.content || chunk.text || '', // ✅ 청크 내용 (하이라이트용)
+            keywords: chunk.keywords || [] // ✅ 청크 키워드 (하이라이트용)
           }
         }));
       }

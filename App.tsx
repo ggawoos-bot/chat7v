@@ -185,13 +185,39 @@ function App() {
         // 두 작업을 병렬로 실행
         await Promise.all([initPromise, chatPromise]);
         
-        // 소스 목록 업데이트
-        setSources(geminiService.getSources());
+        // 소스 목록 업데이트 (초기화 완료 후 반드시 실행)
+        const loadedSources = geminiService.getSources();
+        console.log('📋 로드된 소스 목록:', loadedSources.length, '개');
+        if (loadedSources.length === 0) {
+          console.warn('⚠️ 소스 목록이 비어있습니다. manifest.json을 확인하세요.');
+        } else {
+          console.log('📄 소스 파일들:', loadedSources.map(s => s.title));
+        }
+        setSources(loadedSources);
         
         console.log('Initialization completed successfully');
         setIsInitializing(false);
       } catch (error) {
         console.error('Failed to initialize chat session:', error);
+        // 초기화 실패 시에도 소스 목록은 가져오기 시도
+        try {
+          const fallbackSources = geminiService.getSources();
+          if (fallbackSources.length > 0) {
+            console.log('✅ 초기화 실패했지만 소스 목록은 로드됨:', fallbackSources.length, '개');
+            setSources(fallbackSources);
+          } else {
+            console.warn('⚠️ 초기화 실패 및 소스 목록도 비어있음');
+            // 소스 목록을 다시 로드 시도
+            await geminiService.loadDefaultSources();
+            const retrySources = geminiService.getSources();
+            if (retrySources.length > 0) {
+              console.log('✅ 재시도로 소스 목록 로드 성공:', retrySources.length, '개');
+              setSources(retrySources);
+            }
+          }
+        } catch (sourceError) {
+          console.error('❌ 소스 목록 로드 실패:', sourceError);
+        }
         // 초기화 실패 시에도 앱을 계속 실행
         console.warn('초기화에 실패했지만 앱을 계속 실행합니다.');
         setIsInitializing(false);
@@ -202,37 +228,186 @@ function App() {
     initializeSources();
   }, []);
 
-  // ✅ 참조 클릭 이벤트 리스너
+  // ✅ 열린 PDF 창 참조 저장 (전역)
+  const pdfViewerWindowRef = React.useRef<Window | null>(null);
+  
+  // ✅ 참조 클릭 이벤트 리스너 - 새 창에서 PDF 열기 또는 기존 창 페이지 이동
   useEffect(() => {
     const handleReferenceClick = (event: CustomEvent) => {
       console.log('📥 App.tsx에서 referenceClick 이벤트 수신:', event.detail);
-      const { documentId, chunkId, page, filename, questionContent } = event.detail;
-      console.log('📝 설정할 값:', { documentId, chunkId, page, filename, questionContent });
+      const { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords } = event.detail;
+      console.log('📝 설정할 값:', { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords });
       
-      // ✅ chatKey 변경 방지 (채팅창 초기화 방지)
-      if (documentId && chunkId) {
-        setSelectedDocumentId(documentId);
-        setHighlightedChunkId(chunkId);
-        setQuestionContent(questionContent || ''); // ✅ 질문 내용 설정
-        
-        // ✅ PDF 페이지 정보가 있으면 PDF 뷰어로 전환 및 페이지 이동
-        if (page && page > 0) {
-          setPdfViewerMode('pdf');
-          setPdfCurrentPage(page);
-          if (filename) {
-            setPdfFilename(filename);
+      // PDF 파일명과 페이지 정보가 있으면 새 창에서 PDF 열기
+      // page는 뷰어 인덱스 (PDF.js에서 사용하는 1-based 인덱스)
+      if (filename && page && page > 0) {
+        try {
+          // PDF URL 생성 (개발/프로덕션 환경 자동 감지)
+          const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+          const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
+          const encodedFilename = encodeURIComponent(filename);
+          const pdfUrl = `${basePath}/${encodedFilename}`;
+          const absolutePdfUrl = window.location.origin + pdfUrl;
+          
+          // 하이라이트할 키워드 추출 (질문, 청크 키워드, 청크 내용의 주요 단어)
+          const highlightKeywords: string[] = [];
+          
+          // 1. 질문에서 주요 단어 추출 (2글자 이상, 조사 제거)
+          if (questionContent) {
+            const stopWords = ['은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '만', '조차', '마저', '까지', '부터', '에서', '에게', '한테', '께', '로', '으로', '것', '수', '있', '없', '되', '하', '등', '때', '경우', '위해', '때문', '인가', '인가요', '인지', '인지요', '있습니', '없습니', '입니다', '까요', '나요', '네요', '세요', '주세요', '해주세요', '이야', '이야요', '야', '어', '요'];
+            
+            const questionWords = questionContent
+              .replace(/[^\w가-힣\s]/g, ' ')
+              .split(/\s+/)
+              .filter(w => {
+                const word = w.trim();
+                return word.length >= 2 && !stopWords.includes(word);
+              })
+              .map(word => {
+                // 조사 제거
+                for (const particle of ['은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '만', '에서', '에게', '한테', '께', '로', '으로']) {
+                  if (word.endsWith(particle) && word.length > particle.length) {
+                    return word.slice(0, -particle.length);
+                  }
+                }
+                return word;
+              })
+              .filter(w => w.length >= 2);
+            
+            highlightKeywords.push(...questionWords.slice(0, 5)); // 최대 5개
           }
-          console.log(`📄 PDF 뷰어로 전환: 페이지 ${page}, 파일: ${filename}`);
-        } else {
-          // 페이지 정보가 없으면 텍스트 뷰로 유지
-          setPdfViewerMode('text');
-          console.log('📄 텍스트 뷰로 유지 (페이지 정보 없음)');
+          
+          // 2. 청크 키워드 추가
+          if (keywords && Array.isArray(keywords)) {
+            highlightKeywords.push(...keywords.slice(0, 5));
+          }
+          
+          // 3. 청크 내용에서 중요한 단어 추출 (옵션 - 짧은 문구 추출)
+          if (chunkContent && chunkContent.length > 0) {
+            // 청크 내용의 앞부분에서 주요 단어 추출
+            const contentSnippet = chunkContent.substring(0, 100)
+              .replace(/[^\w가-힣\s]/g, ' ')
+              .split(/\s+/)
+              .filter(w => w.trim().length >= 2)
+              .slice(0, 3); // 최대 3개
+            
+            highlightKeywords.push(...contentSnippet);
+          }
+          
+          // 중복 제거 및 최대 10개로 제한
+          const uniqueKeywords = [...new Set(highlightKeywords)]
+            .filter(k => k && k.trim().length >= 2)
+            .slice(0, 10);
+          
+          // 기존 PDF 창이 열려있고 닫히지 않았는지 확인
+          const existingWindow = pdfViewerWindowRef.current;
+          console.log('🔍 기존 창 확인:', {
+            exists: !!existingWindow,
+            closed: existingWindow?.closed,
+            ready: existingWindow && !existingWindow.closed
+          });
+          
+          if (existingWindow && !existingWindow.closed) {
+            try {
+              const message = {
+                type: 'changePage',
+                page: page,
+                highlight: uniqueKeywords.length > 0 ? uniqueKeywords : undefined,
+                searchText: chunkContent ? chunkContent.substring(0, 200) : undefined
+              };
+              
+              console.log('📤 기존 창에 메시지 전송:', message);
+              
+              // 기존 창에 페이지 이동 메시지 전송
+              existingWindow.postMessage(message, window.location.origin);
+              
+              // 기존 창을 포커스
+              existingWindow.focus();
+              
+              // 메시지가 제대로 전달되었는지 확인 (간단한 핸들쉐이크)
+              setTimeout(() => {
+                // 응답 확인을 위해 다시 한 번 포커스 (메시지 처리 확인)
+                if (existingWindow && !existingWindow.closed) {
+                  console.log(`✅ 기존 PDF 창으로 페이지 ${page} 이동 메시지 전송 완료`);
+                } else {
+                  console.warn('⚠️ 기존 창이 닫혔습니다.');
+                  pdfViewerWindowRef.current = null;
+                }
+              }, 100);
+              
+              return; // 새 창을 열지 않고 종료
+            } catch (error) {
+              console.error('❌ 기존 창에 메시지 전송 실패:', error);
+              // 기존 창 참조 초기화
+              pdfViewerWindowRef.current = null;
+            }
+          }
+          
+          // 뷰어 URL 생성 (하이라이트 키워드 포함)
+          const params = new URLSearchParams({
+            url: absolutePdfUrl,
+            page: page.toString(),
+            title: title || filename
+          });
+          
+          if (uniqueKeywords.length > 0) {
+            params.append('highlight', uniqueKeywords.join(','));
+            console.log('📄 하이라이트 키워드:', uniqueKeywords);
+          }
+          
+          // 청크 내용도 전달 (PDF에서 검색하기 위함 - 일부만)
+          if (chunkContent) {
+            const contentSnippet = chunkContent.substring(0, 200);
+            params.append('searchText', contentSnippet);
+          }
+          
+          const viewerUrl = `/pdf-viewer.html?${params.toString()}`;
+          
+          console.log('📄 PDF 뷰어 URL:', viewerUrl);
+          console.log('📄 PDF 파일 URL:', absolutePdfUrl);
+          
+          // 새 창 열기 (사용자 상호작용 직후이므로 팝업 차단되지 않음)
+          const newWindow = window.open(
+            viewerUrl, 
+            'pdfViewer',
+            'width=1200,height=800,scrollbars=yes,resizable=yes,toolbar=no,location=no,menubar=no'
+          );
+          
+          if (newWindow) {
+            // 새 창 참조 저장
+            pdfViewerWindowRef.current = newWindow;
+            console.log(`✅ 새 창 열기 성공: ${filename}, 페이지 ${page}`);
+            
+            // 새 창이 닫혔는지 확인
+            const checkClosed = setInterval(() => {
+              if (newWindow.closed) {
+                clearInterval(checkClosed);
+                pdfViewerWindowRef.current = null; // 참조 제거
+                console.log('📄 PDF 뷰어 창이 닫혔습니다.');
+              }
+            }, 1000);
+          } else {
+            console.error('❌ 새 창 열기 실패 - 팝업이 차단되었을 수 있습니다.');
+            // 팝업이 차단된 경우 현재 창에서 열기 시도
+            const confirmOpen = window.confirm('팝업이 차단되었습니다. 현재 창에서 PDF를 열까요?');
+            if (confirmOpen) {
+              window.location.href = viewerUrl;
+            }
+          }
+        } catch (error) {
+          console.error('❌ PDF 뷰어 열기 오류:', error);
         }
-        
-        console.log('✅ SourceViewer 상태 업데이트 완료');
-      } else {
-        console.warn('⚠️ documentId 또는 chunkId가 없음');
       }
+      // ✅ PDF 정보가 있으면 좌측 텍스트 뷰는 변경하지 않음 (PDF 뷰어만 제어)
+      // ✅ PDF 정보가 없을 때만 텍스트 뷰로 폴백 (선택적)
+      // else if (documentId && chunkId) {
+      //   // PDF 정보가 없을 때만 텍스트 뷰 표시 (필요시 주석 해제)
+      //   setSelectedDocumentId(documentId);
+      //   setHighlightedChunkId(chunkId);
+      //   setQuestionContent(questionContent || '');
+      //   setPdfViewerMode('text');
+      //   console.log('📄 텍스트 뷰로 표시 (PDF 정보 없음)');
+      // }
     };
 
     window.addEventListener('referenceClick', handleReferenceClick as EventListener);
@@ -498,7 +673,23 @@ function App() {
                   pdfViewerMode={pdfViewerMode}
                   pdfCurrentPage={pdfCurrentPage}
                   pdfFilename={pdfFilename}
-                  onPdfPageChange={(page) => setPdfCurrentPage(page)}
+                  onPdfPageChange={(page) => {
+                    setPdfCurrentPage(page);
+                    
+                    // ✅ 좌측 텍스트 뷰 스크롤 시 PDF 창도 실시간 동기화
+                    const existingWindow = pdfViewerWindowRef.current;
+                    if (existingWindow && !existingWindow.closed) {
+                      try {
+                        console.log(`🔄 텍스트 뷰 페이지 변경 → PDF 창 동기화: ${page}`);
+                        existingWindow.postMessage({
+                          type: 'changePage',
+                          page: page
+                        }, window.location.origin);
+                      } catch (error) {
+                        console.warn('⚠️ PDF 창 동기화 실패:', error);
+                      }
+                    }
+                  }}
                   onViewModeChange={(mode) => setPdfViewerMode(mode)}
                 />
               ) : (

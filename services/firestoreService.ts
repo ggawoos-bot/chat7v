@@ -29,7 +29,9 @@ export interface PDFChunk {
   embedding?: number[]; // ✅ 추가: 벡터 임베딩
   embeddingModel?: string; // ✅ 추가: 어떤 모델로 생성했는지
   metadata: {
-    page?: number;
+    page?: number; // 뷰어 인덱스 (하위 호환성)
+    pageIndex?: number; // 뷰어 인덱스 (PDF.js에서 사용하는 1-based 인덱스)
+    logicalPageNumber?: number; // 논리적 페이지 번호 (문서에 인쇄된 페이지 번호)
     section?: string;
     position: number;
     startPos: number;

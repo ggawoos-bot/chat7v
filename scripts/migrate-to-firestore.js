@@ -27,6 +27,71 @@ dotenv.config();
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 
+// ✅ PDF.js를 서버 사이드에서 사용하기 위한 설정 (Lazy Loading)
+// Node.js 환경에서는 legacy 빌드를 사용해야 함
+let pdfjsLib = null;
+let pdfjsLibLoaded = false;
+
+async function loadPdfJs() {
+  if (pdfjsLibLoaded) return pdfjsLib;
+  
+  try {
+    // 다양한 경로 시도 (최신 pdfjs-dist 버전 대응)
+    const possiblePaths = [
+      path.join(__dirname, '..', 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.js'),
+      path.join(__dirname, '..', 'node_modules', 'pdfjs-dist', 'build', 'pdf.mjs'),
+      path.join(__dirname, '..', 'node_modules', 'pdfjs-dist', 'build', 'pdf.js'),
+      path.join(__dirname, '..', 'node_modules', 'pdfjs-dist', 'dist', 'pdf.mjs'),
+      path.join(__dirname, '..', 'node_modules', 'pdfjs-dist', 'lib', 'pdf.mjs'),
+    ];
+    
+    for (const pdfjsLibPath of possiblePaths) {
+      if (fs.existsSync(pdfjsLibPath)) {
+        try {
+          // Windows 경로 처리
+          const fileUrl = 'file:///' + pdfjsLibPath.replace(/\\/g, '/').replace(/^([A-Z]):/, (match, drive) => `/${drive.toLowerCase()}`);
+          pdfjsLib = await import(fileUrl);
+          pdfjsLibLoaded = true;
+          console.log(`✅ PDF.js 로드 완료: ${path.basename(pdfjsLibPath)}`);
+          
+          // GlobalThis 설정 (PDF.js가 필요로 함)
+          if (typeof globalThis !== 'undefined' && !globalThis.pdfjsLib) {
+            globalThis.pdfjsLib = pdfjsLib;
+          }
+          
+          return pdfjsLib;
+        } catch (importError) {
+          console.warn(`⚠️ 경로 ${pdfjsLibPath}에서 로드 실패:`, importError.message);
+          continue;
+        }
+      }
+    }
+    
+    // 직접 모듈로 import 시도 (최신 버전)
+    try {
+      pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js');
+      pdfjsLibLoaded = true;
+      console.log('✅ PDF.js 모듈 import 성공 (legacy)');
+      return pdfjsLib;
+    } catch (e1) {
+      try {
+        pdfjsLib = await import('pdfjs-dist/build/pdf.mjs');
+        pdfjsLibLoaded = true;
+        console.log('✅ PDF.js 모듈 import 성공 (build/pdf.mjs)');
+        return pdfjsLib;
+      } catch (e2) {
+        console.warn('⚠️ PDF.js를 찾을 수 없습니다. pdf-parse를 사용합니다.');
+        pdfjsLibLoaded = true; // 실패했지만 다시 시도하지 않도록
+        return null;
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ PDF.js 로드 실패, pdf-parse 사용:', error.message);
+    pdfjsLibLoaded = true; // 실패했지만 다시 시도하지 않도록
+    return null;
+  }
+}
+
 // ✅ 동의어 사전 로드
 let synonymDictionary = null;
 try {
@@ -44,13 +109,15 @@ try {
 
 // Firebase configuration (환경변수 우선)
 const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY || "AIzaSyA0zyaTI--MHXoNPYlTf95S6iJu67XdRic",
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "chat6-4b97d.firebaseapp.com",
-  projectId: process.env.FIREBASE_PROJECT_ID || "chat6-4b97d",
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "chat6-4b97d.firebasestorage.app",
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "437591723431",
-  appId: process.env.FIREBASE_APP_ID || "1:437591723431:web:9f228e7d46f33f9d49fa82"
+  apiKey: process.env.FIREBASE_API_KEY || "AIzaSyDyx_GGIDteLNZKspL0RqLdNfMA-uLXwq0",
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "chat7-88761.firebaseapp.com",
+  projectId: process.env.FIREBASE_PROJECT_ID || "chat7-88761",
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "chat7-88761.firebasestorage.app",
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "1090093126813",
+  appId: process.env.FIREBASE_APP_ID || "1:1090093126813:web:3f8872dfe3c4f13c92f074"
 };
+
+
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
@@ -95,22 +162,295 @@ function getPdfFiles() {
   return manifest;
 }
 
-// PDF 파일 파싱
+// ✅ PDF 파일 파싱 (PDF.js Legacy 빌드를 사용한 페이지별 파싱)
 async function parsePdfFile(pdfPath) {
   try {
     const dataBuffer = fs.readFileSync(pdfPath);
-    // pdf-parse 모듈에서 PDFParse 클래스를 가져와 사용
+    
+    // PDF.js Legacy 빌드를 lazy load 시도
+    const loadedPdfJs = await loadPdfJs();
+    
+    if (loadedPdfJs) {
+      try {
+        // Legacy 빌드로 PDF 로드
+        const loadingTask = loadedPdfJs.getDocument({
+          data: new Uint8Array(dataBuffer),
+          verbosity: 0
+        });
+        
+        const pdf = await loadingTask.promise;
+        const numPages = pdf.numPages;
+        
+        console.log(`📄 PDF.js 로드 완료: ${numPages}페이지`);
+        
+        // 페이지별로 텍스트 추출
+        const pagesData = [];
+        let fullText = '';
+        let cumulativeLength = 0;
+        
+        for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+          try {
+            const page = await pdf.getPage(pageNum);
+            const textContent = await page.getTextContent();
+            
+            // 페이지 텍스트 구성
+            let pageText = '';
+            
+            for (let i = 0; i < textContent.items.length; i++) {
+              const item = textContent.items[i];
+              if (item.str) {
+                pageText += item.str;
+                // 줄바꿈 처리
+                if (item.hasEOL) {
+                  pageText += '\n';
+                } else if (i < textContent.items.length - 1 && 
+                          textContent.items[i + 1]?.transform?.[5] && 
+                          item.transform?.[5] && 
+                          Math.abs(textContent.items[i + 1].transform[5] - item.transform[5]) > 5) {
+                  // Y 좌표 차이가 크면 줄바꿈으로 간주
+                  pageText += '\n';
+                }
+              }
+            }
+            
+            // ✅ 논리적 페이지 번호 추출 (개선된 버전 - 컨텍스트 포함)
+            // 이전 페이지와 다음 페이지 정보를 컨텍스트로 전달
+            const previousPage = pagesData.length > 0 ? pagesData[pagesData.length - 1] : null;
+            const nextPageNumber = pageNum < numPages ? pageNum + 1 : null;
+            
+            const logicalPageNumber = extractLogicalPageNumber(pageText, pageNum, {
+              previousPageNum: previousPage?.logicalPageNumber || null,
+              nextPageNum: null, // 다음 페이지는 아직 추출 전이므로 null
+              totalPages: numPages
+            });
+            
+            // 페이지 데이터 저장
+            const pageStart = cumulativeLength;
+            const pageEnd = cumulativeLength + pageText.length;
+            
+            pagesData.push({
+              pageNumber: pageNum, // 뷰어 인덱스 (1-based)
+              logicalPageNumber: logicalPageNumber, // 논리적 페이지 번호
+              text: pageText,
+              startPosition: pageStart,
+              endPosition: pageEnd
+            });
+            
+            // 이전 페이지들의 다음 페이지 정보 업데이트 (후처리 - 실패한 페이지 재시도)
+            if (pagesData.length >= 2 && pagesData[pagesData.length - 2].logicalPageNumber === pagesData[pagesData.length - 2].pageNumber) {
+              // 이전 페이지가 추출 실패했으면 재시도 (다음 페이지 정보 활용)
+              const prevIndex = pagesData.length - 2;
+              const prevPageText = pagesData[prevIndex].text;
+              const retryResult = extractLogicalPageNumber(prevPageText, pagesData[prevIndex].pageNumber, {
+                previousPageNum: prevIndex > 0 ? pagesData[prevIndex - 1].logicalPageNumber : null,
+                nextPageNum: logicalPageNumber !== pageNum ? logicalPageNumber : null,
+                totalPages: numPages
+              });
+              
+              if (retryResult !== pagesData[prevIndex].pageNumber) {
+                pagesData[prevIndex].logicalPageNumber = retryResult;
+                console.log(`  🔄 페이지 ${pagesData[prevIndex].pageNumber} 재추출 성공: ${retryResult}`);
+              }
+            }
+            
+            // 연속된 실패 페이지들 일괄 재처리 (매 10페이지마다)
+            if (pageNum % 10 === 0 && pagesData.length >= 10) {
+              let retryCount = 0;
+              for (let i = Math.max(0, pagesData.length - 10); i < pagesData.length - 1; i++) {
+                if (pagesData[i].logicalPageNumber === pagesData[i].pageNumber) {
+                  // 실패한 페이지 재시도
+                  const prevNum = i > 0 ? pagesData[i - 1].logicalPageNumber : null;
+                  const nextNum = pagesData[i + 1].logicalPageNumber !== pagesData[i + 1].pageNumber 
+                    ? pagesData[i + 1].logicalPageNumber 
+                    : null;
+                  const retryResult = extractLogicalPageNumber(pagesData[i].text, pagesData[i].pageNumber, {
+                    previousPageNum: prevNum,
+                    nextPageNum: nextNum,
+                    totalPages: numPages
+                  });
+                  
+                  if (retryResult !== pagesData[i].pageNumber) {
+                    pagesData[i].logicalPageNumber = retryResult;
+                    retryCount++;
+                  }
+                }
+              }
+              if (retryCount > 0) {
+                console.log(`  🔄 일괄 재추출: ${retryCount}개 페이지 성공`);
+              }
+            }
+            
+            fullText += pageText + '\n\n';
+            cumulativeLength = pageEnd + 2; // '\n\n' 포함
+            
+            if (pageNum % 10 === 0 || pageNum === 1 || pageNum === numPages) {
+              const successIndicator = logicalPageNumber !== pageNum ? ` (논리적 페이지: ${logicalPageNumber})` : '';
+              console.log(`  ✓ 페이지 ${pageNum}/${numPages} 파싱 완료 (${pageText.length.toLocaleString()}자)${successIndicator}`);
+            }
+          } catch (pageError) {
+            console.warn(`  ⚠️ 페이지 ${pageNum} 파싱 실패:`, pageError.message);
+            // 빈 페이지로 처리
+            pagesData.push({
+              pageNumber: pageNum, // 뷰어 인덱스
+              logicalPageNumber: pageNum, // 논리적 페이지 번호 (기본값)
+              text: '',
+              startPosition: cumulativeLength,
+              endPosition: cumulativeLength
+            });
+          }
+        }
+        
+        // 최종 후처리: 실패한 페이지들 재추출
+        console.log('🔄 최종 후처리: 실패한 페이지들 재추출 시도...');
+        let finalRetryCount = 0;
+        for (let i = 0; i < pagesData.length; i++) {
+          if (pagesData[i].logicalPageNumber === pagesData[i].pageNumber) {
+            const prevNum = i > 0 ? pagesData[i - 1].logicalPageNumber : null;
+            const nextNum = i < pagesData.length - 1 && pagesData[i + 1].logicalPageNumber !== pagesData[i + 1].pageNumber
+              ? pagesData[i + 1].logicalPageNumber
+              : null;
+            const retryResult = extractLogicalPageNumber(pagesData[i].text, pagesData[i].pageNumber, {
+              previousPageNum: prevNum,
+              nextPageNum: nextNum,
+              totalPages: numPages
+            });
+            
+            if (retryResult !== pagesData[i].pageNumber) {
+              pagesData[i].logicalPageNumber = retryResult;
+              finalRetryCount++;
+            }
+          }
+        }
+        
+        const extractedCount = pagesData.filter(p => p.logicalPageNumber !== p.pageNumber).length;
+        const extractionRate = ((extractedCount / numPages) * 100).toFixed(1);
+        
+        console.log(`✅ PDF 파싱 완료: ${numPages}페이지, 총 ${fullText.length.toLocaleString()}자`);
+        console.log(`📊 논리적 페이지 번호 추출 결과: ${extractedCount}/${numPages}개 성공 (${extractionRate}%)`);
+        if (finalRetryCount > 0) {
+          console.log(`📊 최종 후처리로 ${finalRetryCount}개 페이지 추가 추출 성공`);
+        }
+        
+        return {
+          text: fullText,
+          pages: numPages,
+          pagesData: pagesData,
+          info: {}
+        };
+      } catch (pdfjsError) {
+        console.warn('⚠️ PDF.js 파싱 실패, pdf-parse로 폴백:', pdfjsError.message);
+        // 폴백: pdf-parse 사용
+      }
+    }
+    
+    // 폴백: pdf-parse 사용 (페이지별 정보는 없지만 기본 기능 작동)
     const PDFParse = pdfParse.PDFParse || pdfParse;
     const instance = new PDFParse({ data: dataBuffer });
     const data = await instance.getText();
     
+    console.warn('⚠️ pdf-parse 사용 (페이지별 정보는 비율로 추정됨)');
+    console.log('📝 논리적 페이지 번호 추출 시도 (텍스트 기반)...');
+    
+    // pdf-parse는 페이지별 정보를 제공하지 않으므로 비율 계산
+    const numPages = data.total || 1;
+    const totalLength = data.text.length;
+    const avgPageLength = totalLength / numPages;
+    
+    const pagesData = [];
+    for (let i = 1; i <= numPages; i++) {
+      const pageStart = Math.floor((i - 1) * avgPageLength);
+      const pageEnd = Math.floor(i * avgPageLength);
+      const pageText = data.text.slice(pageStart, pageEnd);
+      
+      // ✅ 논리적 페이지 번호 추출 함수 호출 (개선된 버전 - 컨텍스트 포함)
+      const previousPage = pagesData.length > 0 ? pagesData[pagesData.length - 1] : null;
+      const logicalPageNumber = extractLogicalPageNumber(pageText, i, {
+        previousPageNum: previousPage?.logicalPageNumber || null,
+        nextPageNum: null,
+        totalPages: numPages
+      });
+      
+      pagesData.push({
+        pageNumber: i, // 뷰어 인덱스
+        logicalPageNumber: logicalPageNumber, // ✅ 추출된 논리적 페이지 번호
+        text: pageText,
+        startPosition: pageStart,
+        endPosition: pageEnd
+      });
+      
+      // 진행 상황 로그 (처음 10페이지, 매 50페이지, 마지막 페이지)
+      if (i <= 10 || i % 50 === 0 || i === numPages) {
+        if (logicalPageNumber !== i) {
+          console.log(`  ✓ 페이지 ${i}: 논리적 페이지 번호 ${logicalPageNumber} 추출 성공`);
+        }
+      }
+      
+      // 연속된 실패 페이지들 일괄 재처리 (매 20페이지마다)
+      if (i % 20 === 0 && pagesData.length >= 20) {
+        let retryCount = 0;
+        for (let j = Math.max(0, pagesData.length - 20); j < pagesData.length - 1; j++) {
+          if (pagesData[j].logicalPageNumber === pagesData[j].pageNumber) {
+            // 실패한 페이지 재시도
+            const prevNum = j > 0 ? pagesData[j - 1].logicalPageNumber : null;
+            const nextNum = pagesData[j + 1].logicalPageNumber !== pagesData[j + 1].pageNumber 
+              ? pagesData[j + 1].logicalPageNumber 
+              : null;
+            const retryResult = extractLogicalPageNumber(pagesData[j].text, pagesData[j].pageNumber, {
+              previousPageNum: prevNum,
+              nextPageNum: nextNum,
+              totalPages: numPages
+            });
+            
+            if (retryResult !== pagesData[j].pageNumber) {
+              pagesData[j].logicalPageNumber = retryResult;
+              retryCount++;
+            }
+          }
+        }
+        if (retryCount > 0) {
+          console.log(`  🔄 일괄 재추출: ${retryCount}개 페이지 성공`);
+        }
+      }
+    }
+    
+    // 최종 후처리: 남은 실패 페이지들 일괄 재처리
+    console.log('🔄 최종 후처리: 실패한 페이지들 재추출 시도...');
+    let finalRetryCount = 0;
+    for (let i = 0; i < pagesData.length; i++) {
+      if (pagesData[i].logicalPageNumber === pagesData[i].pageNumber) {
+        const prevNum = i > 0 ? pagesData[i - 1].logicalPageNumber : null;
+        const nextNum = i < pagesData.length - 1 && pagesData[i + 1].logicalPageNumber !== pagesData[i + 1].pageNumber
+          ? pagesData[i + 1].logicalPageNumber
+          : null;
+        const retryResult = extractLogicalPageNumber(pagesData[i].text, pagesData[i].pageNumber, {
+          previousPageNum: prevNum,
+          nextPageNum: nextNum,
+          totalPages: numPages
+        });
+        
+        if (retryResult !== pagesData[i].pageNumber) {
+          pagesData[i].logicalPageNumber = retryResult;
+          finalRetryCount++;
+        }
+      }
+    }
+    
+    // 추출 결과 요약
+    const extractedCount = pagesData.filter(p => p.logicalPageNumber !== p.pageNumber).length;
+    const extractionRate = ((extractedCount / numPages) * 100).toFixed(1);
+    console.log(`📊 논리적 페이지 번호 추출 결과: ${extractedCount}/${numPages}개 성공 (${extractionRate}%)`);
+    if (finalRetryCount > 0) {
+      console.log(`📊 최종 후처리로 ${finalRetryCount}개 페이지 추가 추출 성공`);
+    }
+    
     return {
       text: data.text,
-      pages: data.total,
+      pages: numPages,
+      pagesData: pagesData,
       info: {}
     };
   } catch (error) {
-    console.error(`PDF 파싱 실패: ${pdfPath}`, error);
+    console.error(`❌ PDF 파싱 실패: ${pdfPath}`, error);
     throw error;
   }
 }
@@ -255,14 +595,17 @@ async function clearAllExistingData() {
 }
 
 
-// 개별 청크를 Firestore에 저장
-async function saveChunkToFirestore(documentId, filename, chunk, index, position, totalTextLength = 0, totalPages = 0) {
+// 개별 청크를 Firestore에 저장 (사용 안 함 - 배치 저장 사용)
+async function saveChunkToFirestore(documentId, filename, chunk, index, position, pagesData = []) {
   try {
     const keywords = extractKeywords(chunk);
-    // ✅ 페이지 번호 계산 (텍스트 위치 기반)
-    const pageNumber = totalPages > 0 && totalTextLength > 0
-      ? calculatePageNumber(position, totalTextLength, totalPages)
-      : 1; // 페이지 정보가 없으면 기본값 1
+    const chunkStartPos = position;
+    const chunkEndPos = position + chunk.length;
+    
+    // ✅ 정확한 페이지 정보 계산 (뷰어 인덱스와 논리적 페이지 번호)
+    const pageInfo = pagesData.length > 0
+      ? getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData)
+      : { pageIndex: 1, logicalPageNumber: 1 };
     
     const chunkData = {
       documentId: documentId,
@@ -271,11 +614,13 @@ async function saveChunkToFirestore(documentId, filename, chunk, index, position
       keywords: keywords,
       metadata: {
         position: index,
-        startPos: position,
-        endPos: position + chunk.length,
+        startPos: chunkStartPos,
+        endPos: chunkEndPos,
         originalSize: chunk.length,
         source: 'Direct PDF Processing',
-        page: pageNumber // ✅ 페이지 정보 추가
+        page: pageInfo.pageIndex, // 뷰어 인덱스 (1-based, PDF.js와 호환)
+        pageIndex: pageInfo.pageIndex, // 뷰어 인덱스 (명시적)
+        logicalPageNumber: pageInfo.logicalPageNumber // 논리적 페이지 번호 (문서에 인쇄된 번호)
       },
       searchableText: chunk.toLowerCase(),
       createdAt: Timestamp.now(),
@@ -290,15 +635,61 @@ async function saveChunkToFirestore(documentId, filename, chunk, index, position
   }
 }
 
-// 페이지 번호 계산 함수 (텍스트 위치 기반)
-function calculatePageNumber(textPosition, totalTextLength, totalPages) {
-  if (totalPages === 0 || totalTextLength === 0) return 1;
-  const pageNumber = Math.floor((textPosition / totalTextLength) * totalPages) + 1;
-  return Math.min(pageNumber, totalPages); // 최대 페이지 수 제한
+// ✅ 정확한 페이지 번호 계산 함수 (페이지별 데이터 사용) - 뷰어 인덱스와 논리적 페이지 번호 모두 반환
+function getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData) {
+  if (!pagesData || pagesData.length === 0) {
+    return { pageIndex: 1, logicalPageNumber: 1 };
+  }
+  
+  // 청크가 속한 페이지 찾기
+  // 청크의 중간 지점이 속한 페이지를 우선 선택
+  const chunkCenter = (chunkStartPos + chunkEndPos) / 2;
+  
+  for (let i = 0; i < pagesData.length; i++) {
+    const page = pagesData[i];
+    
+    // 청크의 중심점이 이 페이지 범위 내에 있는지 확인
+    if (chunkCenter >= page.startPosition && chunkCenter <= page.endPosition) {
+      return {
+        pageIndex: page.pageNumber, // 뷰어 인덱스 (1-based)
+        logicalPageNumber: page.logicalPageNumber || page.pageNumber // 논리적 페이지 번호
+      };
+    }
+    
+    // 청크가 페이지 경계에 걸쳐있는 경우
+    if (chunkStartPos < page.endPosition && chunkEndPos > page.startPosition) {
+      // 청크의 대부분이 속한 페이지 결정
+      const overlapStart = Math.max(chunkStartPos, page.startPosition);
+      const overlapEnd = Math.min(chunkEndPos, page.endPosition);
+      const overlap = overlapEnd - overlapStart;
+      const chunkLength = chunkEndPos - chunkStartPos;
+      
+      // 청크의 50% 이상이 이 페이지에 있으면 이 페이지 선택
+      if (overlap >= chunkLength * 0.5) {
+        return {
+          pageIndex: page.pageNumber, // 뷰어 인덱스 (1-based)
+          logicalPageNumber: page.logicalPageNumber || page.pageNumber // 논리적 페이지 번호
+        };
+      }
+    }
+  }
+  
+  // 마지막 페이지로 폴백
+  const lastPage = pagesData[pagesData.length - 1];
+  return {
+    pageIndex: lastPage?.pageNumber || 1,
+    logicalPageNumber: lastPage?.logicalPageNumber || lastPage?.pageNumber || 1
+  };
 }
 
-// 스트리밍 청크 처리 (WriteBatch 최적화) - 수정된 버전
-async function processChunksStreaming(documentId, filename, text, totalPages = 0) {
+// 하위 호환성을 위한 함수 (기존 코드 유지)
+function getPageNumberForChunk(chunkStartPos, chunkEndPos, pagesData) {
+  const pageInfo = getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData);
+  return pageInfo.pageIndex; // 뷰어 인덱스 반환 (기존 동작 유지)
+}
+
+// 스트리밍 청크 처리 (WriteBatch 최적화) - 정확한 페이지 번호 사용
+async function processChunksStreaming(documentId, filename, text, pagesData = []) {
   const chunkSize = 2000;
   const overlap = 200;
   let position = 0;
@@ -312,8 +703,8 @@ async function processChunksStreaming(documentId, filename, text, totalPages = 0
   const batchSize = 2; // WriteBatch 크기 (메모리 안정성을 위해 2개)
   
   console.log(`📦 스트리밍 청크 처리 시작: ${text.length.toLocaleString()}자`);
-  if (totalPages > 0) {
-    console.log(`📄 총 페이지 수: ${totalPages} (페이지 정보 저장 활성화)`);
+  if (pagesData.length > 0) {
+    console.log(`📄 총 페이지 수: ${pagesData.length} (정확한 페이지 정보 사용)`);
   }
   console.log(`🔧 배치 크기: ${batchSize}개 (메모리 안정적 모드)`);
   console.log(`💾 초기 메모리: ${JSON.stringify(getMemoryUsage())}MB`);
@@ -351,10 +742,13 @@ async function processChunksStreaming(documentId, filename, text, totalPages = 0
     
     // 청크 데이터 수집
     const keywords = extractKeywords(chunk.trim());
-    // ✅ 페이지 번호 계산 (텍스트 위치 기반)
-    const pageNumber = totalPages > 0 
-      ? calculatePageNumber(position, text.length, totalPages)
-      : 1; // 페이지 정보가 없으면 기본값 1
+    const chunkStartPos = position;
+    const chunkEndPos = position + chunk.length;
+    
+    // ✅ 정확한 페이지 정보 계산 (뷰어 인덱스와 논리적 페이지 번호)
+    const pageInfo = pagesData.length > 0
+      ? getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData)
+      : { pageIndex: 1, logicalPageNumber: 1 };
     
     chunkDataList.push({
       documentId: documentId,
@@ -363,11 +757,13 @@ async function processChunksStreaming(documentId, filename, text, totalPages = 0
       keywords: keywords,
       metadata: {
         position: chunkIndex,
-        startPos: position,
-        endPos: position + chunk.length,
+        startPos: chunkStartPos,
+        endPos: chunkEndPos,
         originalSize: chunk.length,
         source: 'Direct PDF Processing',
-        page: pageNumber // ✅ 페이지 정보 추가
+        page: pageInfo.pageIndex, // 뷰어 인덱스 (1-based, PDF.js와 호환)
+        pageIndex: pageInfo.pageIndex, // 뷰어 인덱스 (명시적)
+        logicalPageNumber: pageInfo.logicalPageNumber // 논리적 페이지 번호 (문서에 인쇄된 번호)
       },
       searchableText: chunk.trim().toLowerCase(),
       createdAt: Timestamp.now(),
@@ -435,6 +831,582 @@ async function saveChunksBatch(chunkDataList) {
     console.error(`❌ 청크 배치 저장 실패:`, error.message);
     return 0;
   }
+}
+
+// ✅ 논리적 페이지 번호 추출 함수 (다중 전략 - 실패 시 여러 방법 순차 시도, 재시도 로직 포함, 컨텍스트 기반)
+function extractLogicalPageNumber(pageText, pageNum, contextOrMaxRetries = {}) {
+  // 컨텍스트 또는 maxRetries 파라미터 처리
+  let context = {};
+  let maxRetries = 10; // 재시도 횟수 증가
+  
+  if (typeof contextOrMaxRetries === 'number') {
+    maxRetries = contextOrMaxRetries;
+  } else if (typeof contextOrMaxRetries === 'object' && contextOrMaxRetries !== null) {
+    context = contextOrMaxRetries;
+  }
+  
+  const { previousPageNum = null, nextPageNum = null, totalPages = null } = context;
+  
+  if (!pageText || pageText.trim().length === 0) {
+    // 컨텍스트 기반 추정 시도
+    return tryContextualEstimation(pageNum, previousPageNum, nextPageNum);
+  }
+  
+  let attempts = 0;
+  let lastResult = null;
+  let bestResult = null; // 가장 신뢰도 높은 결과
+  
+  // 최대 재시도 횟수까지 반복
+  while (attempts < maxRetries) {
+    attempts++;
+    
+    // 전략 1: 하단 라인 검색 (5줄 → 10줄 → 15줄 → 20줄 → 30줄 → 50줄 확장)
+    for (const bottomLineCount of [5, 10, 15, 20, 30, 50]) {
+      const result = tryExtractFromBottomLines(pageText, pageNum, bottomLineCount);
+      if (result.success) {
+        const patternType = result.patternType || 'unknown';
+        if (validatePageNumberWithContext(result.value, pageNum, patternType, previousPageNum, nextPageNum)) {
+          console.log(`  ✅ [시도 ${attempts}] 페이지 ${pageNum}: 논리적 페이지 번호 ${result.value} 추출 성공 (전략1-${bottomLineCount}줄)`);
+          return result.value;
+        }
+        if (!bestResult || result.patternType === 'fraction' || result.patternType === 'of-pattern') {
+          bestResult = result;
+        }
+        lastResult = result;
+      }
+    }
+    
+    // 전략 2: 전체 텍스트에서 페이지 번호 패턴 검색 (하단 우선)
+    const result2 = tryExtractFromFullText(pageText, pageNum);
+    if (result2.success) {
+      const patternType = result2.patternType || 'unknown';
+      if (validatePageNumberWithContext(result2.value, pageNum, patternType, previousPageNum, nextPageNum)) {
+        console.log(`  ✅ [시도 ${attempts}] 페이지 ${pageNum}: 논리적 페이지 번호 ${result2.value} 추출 성공 (전략2)`);
+        return result2.value;
+      }
+      if (!bestResult || result2.patternType === 'fraction') {
+        bestResult = result2;
+      }
+      lastResult = result2;
+    }
+    
+    // 전략 3: 중앙 하단 영역 검색 (라인 길이 기반)
+    const result3 = tryExtractFromCenterBottom(pageText, pageNum);
+    if (result3.success) {
+      const patternType = result3.patternType || 'unknown';
+      if (validatePageNumberWithContext(result3.value, pageNum, patternType, previousPageNum, nextPageNum)) {
+        console.log(`  ✅ [시도 ${attempts}] 페이지 ${pageNum}: 논리적 페이지 번호 ${result3.value} 추출 성공 (전략3)`);
+        return result3.value;
+      }
+      if (!bestResult) {
+        bestResult = result3;
+      }
+      lastResult = result3;
+    }
+    
+    // 전략 4: 분수 패턴 검색 (예: "53/124"에서 53 추출)
+    const result4 = tryExtractFromFraction(pageText, pageNum);
+    if (result4.success) {
+      if (validatePageNumberWithContext(result4.value, pageNum, 'fraction', previousPageNum, nextPageNum)) {
+        console.log(`  ✅ [시도 ${attempts}] 페이지 ${pageNum}: 논리적 페이지 번호 ${result4.value} 추출 성공 (전략4-분수)`);
+        return result4.value;
+      }
+      if (!bestResult || bestResult.patternType !== 'fraction') {
+        bestResult = result4; // 분수 패턴은 높은 신뢰도
+      }
+      lastResult = result4;
+    }
+    
+    // 전략 5: 페이지 번호 형식 유사도 검색
+    const result5 = tryExtractBySimilarity(pageText, pageNum);
+    if (result5.success) {
+      if (validatePageNumberWithContext(result5.value, pageNum, 'single-digit', previousPageNum, nextPageNum)) {
+        console.log(`  ✅ [시도 ${attempts}] 페이지 ${pageNum}: 논리적 페이지 번호 ${result5.value} 추출 성공 (전략5)`);
+        return result5.value;
+      }
+      if (!bestResult) {
+        bestResult = result5;
+      }
+      lastResult = result5;
+    }
+    
+    // 전략 6: 컨텍스트 기반 추정 (이전/다음 페이지 정보 활용)
+    if (previousPageNum !== null || nextPageNum !== null) {
+      const estimated = tryContextualEstimation(pageNum, previousPageNum, nextPageNum);
+      if (estimated !== pageNum && estimated >= 1 && estimated <= 999) {
+        console.log(`  ✅ [시도 ${attempts}] 페이지 ${pageNum}: 논리적 페이지 번호 ${estimated} 추출 성공 (전략6-컨텍스트)`);
+        return estimated;
+      }
+    }
+    
+    // 마지막 시도에서 가장 좋은 결과 사용 (검증 완화)
+    if (attempts >= maxRetries && bestResult) {
+      const diff = Math.abs(bestResult.value - pageNum);
+      console.log(`  ⚠️ 페이지 ${pageNum}: 모든 검증 실패, 최선 결과 ${bestResult.value} 사용 (차이: ${diff}, 패턴: ${bestResult.patternType || 'unknown'})`);
+      return bestResult.value;
+    }
+  }
+  
+  // 모든 전략 실패: 컨텍스트 기반 추정 또는 뷰어 인덱스 사용
+  const contextualResult = tryContextualEstimation(pageNum, previousPageNum, nextPageNum);
+  if (contextualResult !== pageNum) {
+    return contextualResult;
+  }
+  
+  if (pageNum % 50 === 0 || pageNum === 1 || pageNum <= 10) {
+    console.log(`  ⚠️ 페이지 ${pageNum}에서 논리적 페이지 번호를 찾지 못함. 모든 전략 실패. 뷰어 인덱스(${pageNum}) 사용`);
+  }
+  return pageNum;
+}
+
+// 컨텍스트 기반 추정 함수
+function tryContextualEstimation(pageNum, previousPageNum, nextPageNum) {
+  // 이전 페이지 번호가 있으면 그것을 기반으로 추정
+  if (previousPageNum !== null && previousPageNum !== undefined && previousPageNum !== pageNum) {
+    const estimated = previousPageNum + 1;
+    if (estimated >= 1 && estimated <= 999) {
+      return estimated;
+    }
+  }
+  
+  // 다음 페이지 번호가 있으면 그것을 기반으로 추정
+  if (nextPageNum !== null && nextPageNum !== undefined && nextPageNum !== pageNum) {
+    const estimated = nextPageNum - 1;
+    if (estimated >= 1 && estimated <= 999) {
+      return estimated;
+    }
+  }
+  
+  return pageNum;
+}
+
+// 컨텍스트를 고려한 페이지 번호 검증 함수
+function validatePageNumberWithContext(extractedNum, pageNum, patternType = 'unknown', previousPageNum = null, nextPageNum = null) {
+  if (!extractedNum || extractedNum < 1 || extractedNum > 999) {
+    return false;
+  }
+  
+  // 뷰어 인덱스와 동일하면 유효하지 않음
+  if (extractedNum === pageNum) {
+    return false;
+  }
+  
+  // 컨텍스트 기반 검증
+  if (previousPageNum !== null && previousPageNum !== undefined) {
+    const diffFromPrev = extractedNum - previousPageNum;
+    // 이전 페이지보다 1 증가하는 것이 일반적이지만, ±5 범위는 허용
+    if (diffFromPrev < -5 || diffFromPrev > 10) {
+      return false;
+    }
+  }
+  
+  if (nextPageNum !== null && nextPageNum !== undefined) {
+    const diffToNext = nextPageNum - extractedNum;
+    // 다음 페이지보다 1 작은 것이 일반적이지만, ±5 범위는 허용
+    if (diffToNext < -5 || diffToNext > 10) {
+      return false;
+    }
+  }
+  
+  // 기본 검증
+  return validatePageNumber(extractedNum, pageNum, patternType);
+}
+
+// 페이지 번호 검증 함수 (추출된 번호가 합리적인지 확인, 본문 숫자 제외 강화)
+function validatePageNumber(extractedNum, pageNum, patternType = 'unknown') {
+  if (!extractedNum || extractedNum < 1 || extractedNum > 999) {
+    return false;
+  }
+  
+  // 뷰어 인덱스와 동일하면 유효하지 않음
+  if (extractedNum === pageNum) {
+    return false;
+  }
+  
+  // 차이 계산
+  const diff = Math.abs(extractedNum - pageNum);
+  
+  // 패턴 타입에 따른 검증 기준
+  const isHighConfidencePattern = patternType === 'fraction' || patternType === 'of-pattern';
+  const maxDiff = isHighConfidencePattern ? 100 : 30;
+  
+  // 단독 숫자 패턴의 경우 매우 엄격한 검증
+  if (patternType === 'single-digit') {
+    // 차이 20 이내만 허용 (너무 크면 본문 숫자)
+    if (diff > 20) {
+      return false;
+    }
+    
+    // 뷰어 인덱스보다 너무 작으면 본문 숫자 (예: 페이지 100에서 1, 2, 3 등)
+    // 최소한 뷰어 인덱스의 20% 이상이어야 함
+    if (extractedNum < pageNum * 0.2) {
+      return false;
+    }
+    
+    // 뷰어 인덱스보다 크면 비정상 (일반적으로 논리적 번호 <= 뷰어 인덱스)
+    if (extractedNum > pageNum && diff > 5) {
+      return false;
+    }
+    
+    // 추출된 번호가 뷰어 인덱스보다 작으면 허용 (표지/목차 제외 고려)
+    return extractedNum < pageNum;
+  }
+  
+  // 일반 패턴 검증
+  if (diff > maxDiff) {
+    return false;
+  }
+  
+  // 추출된 번호가 뷰어 인덱스보다 크면 비정상 (일반적으로 논리적 번호 <= 뷰어 인덱스)
+  if (extractedNum > pageNum && diff > 5) {
+    return false;
+  }
+  
+  // 추출된 번호가 뷰어 인덱스보다 작으면 합리적 (표지/목차 제외)
+  if (extractedNum < pageNum && diff <= maxDiff) {
+    return true;
+  }
+  
+  return false;
+}
+
+// 유효한 텍스트만 필터링 (깨진 바이너리 데이터 제거)
+function filterValidText(text) {
+  if (!text) return '';
+  
+  // 한글, 영문, 숫자, 기본 기호가 포함된 라인만 유지
+  const lines = text.split('\n');
+  const validLines = lines.filter(line => {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) return false;
+    
+    // 깨진 바이너리 데이터 체크 (특수 문자 비율이 너무 높으면 제외)
+    const validChars = trimmed.match(/[가-힣a-zA-Z0-9\s.,;:!?()[\]{}'"\-=+<>/]/g);
+    const validRatio = validChars ? validChars.length / trimmed.length : 0;
+    
+    // 유효 문자 비율이 50% 이상이거나 숫자/영문만 있는 경우 유효
+    return validRatio >= 0.5 || /^[\d\s\/ofOf\-]+$/i.test(trimmed);
+  });
+  
+  return validLines.join('\n');
+}
+
+// 전략 1: 하단 라인 검색 (개선된 버전 - 본문 숫자 제외 강화)
+function tryExtractFromBottomLines(pageText, pageNum, lineCount = 10) {
+  // 깨진 텍스트 필터링 (유효한 텍스트만 사용)
+  const validText = filterValidText(pageText);
+  if (!validText || validText.trim().length === 0) return { success: false };
+  
+  const lines = validText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  if (lines.length === 0) return { success: false };
+  
+  // 하단 끝부분만 집중 검색 (마지막 3-5줄 우선, 그 다음 확장)
+  const bottomLines = lineCount <= 5 ? lines.slice(-lineCount) : lines.slice(-Math.min(lineCount, 5));
+  
+  // 페이지 번호 패턴들 (고신뢰도 패턴 우선, 단독 숫자는 최후 수단)
+  const pageNumberPatterns = [
+    // 1. 분수 패턴 (가장 신뢰도 높음)
+    { pattern: /^(\d{1,3})\s*\/\s*\d+$/, type: 'fraction', confidence: 0.98, minLinePosition: 0.95 },  // "53/124"
+    { pattern: /(\d{1,3})\s*\/\s*\d+$/, type: 'fraction', confidence: 0.95, minLinePosition: 0.9 },   // "53/124" (줄 끝)
+    { pattern: /^(\d{1,3})\s*\/\s*\d+/, type: 'fraction', confidence: 0.9, minLinePosition: 0.85 },   // "53/124" (줄 시작)
+    
+    // 2. "of" 패턴
+    { pattern: /^--\s*(\d{1,3})\s*of\s*\d+\s*--$/i, type: 'of-pattern', confidence: 0.98, minLinePosition: 0.95 },
+    { pattern: /^-\s*(\d{1,3})\s*of\s*\d+\s*-$/i, type: 'of-pattern', confidence: 0.95, minLinePosition: 0.9 },
+    { pattern: /^\s*(\d{1,3})\s*of\s*\d+\s*$/i, type: 'of-pattern', confidence: 0.92, minLinePosition: 0.9 },
+    { pattern: /^(\d{1,3})\s*of\s*\d+$/i, type: 'of-pattern', confidence: 0.9, minLinePosition: 0.85 },
+    
+    // 3. 페이지 단어 포함 패턴
+    { pattern: /^페이지\s*(\d{1,3})$/i, type: 'page-word', confidence: 0.85, minLinePosition: 0.9 },
+    { pattern: /^Page\s*(\d{1,3})$/i, type: 'page-word', confidence: 0.85, minLinePosition: 0.9 },
+    { pattern: /^p\.\s*(\d{1,3})$/i, type: 'page-word', confidence: 0.8, minLinePosition: 0.85 },
+    { pattern: /^P\.\s*(\d{1,3})$/i, type: 'page-word', confidence: 0.8, minLinePosition: 0.85 },
+    { pattern: /페이지\s*(\d{1,3})/i, type: 'page-word', confidence: 0.75, minLinePosition: 0.85 },
+    { pattern: /(\d{1,3})\s*페이지/i, type: 'page-word', confidence: 0.75, minLinePosition: 0.85 },
+    
+    // 4. 단독 숫자 (매우 엄격한 조건 - 하단 마지막 2줄만, 짧은 줄만)
+    { pattern: /^(\d{1,3})$/, type: 'single-digit', confidence: 0.4, minLinePosition: 0.98, maxLength: 5 },
+  ];
+  
+  // 하단에서 위로 검색 (마지막 줄부터)
+  for (let i = bottomLines.length - 1; i >= 0; i--) {
+    const line = bottomLines[i];
+    const linePosition = (bottomLines.length - 1 - i) / Math.max(1, bottomLines.length - 1); // 0(마지막) ~ 1(처음)
+    const lineIndex = lines.length - (bottomLines.length - i); // 전체 라인에서의 위치
+    
+    for (const patternObj of pageNumberPatterns) {
+      // 라인 위치 검증 (페이지 번호는 하단 끝부분에 있음)
+      if (linePosition > patternObj.minLinePosition) continue;
+      
+      // 단독 숫자는 매우 짧은 줄만 허용 (페이지 번호는 보통 1-5자)
+      if (patternObj.maxLength && line.length > patternObj.maxLength) continue;
+      
+      // 단독 숫자는 하단 마지막 2줄만 검색
+      if (patternObj.type === 'single-digit' && i > 1) continue;
+      
+      const match = line.match(patternObj.pattern);
+      if (match && match[1]) {
+        const extractedNum = parseInt(match[1], 10);
+        if (extractedNum >= 1 && extractedNum <= 999 && extractedNum !== pageNum) {
+          // 단독 숫자 패턴은 추가 검증 필요
+          if (patternObj.type === 'single-digit') {
+            // 뷰어 인덱스와 차이가 너무 크면 본문 숫자일 가능성
+            const diff = Math.abs(extractedNum - pageNum);
+            if (diff > 50 || extractedNum < pageNum * 0.1) {
+              continue; // 본문 숫자일 가능성이 높음
+            }
+            
+            // 매우 작은 숫자(1-10)는 신중하게 - 하단 정말 끝부분만
+            if (extractedNum <= 10 && i > 0) {
+              continue; // 마지막 줄이 아니면 건너뛰기
+            }
+          }
+          
+          // 검증 및 반환
+          if (validatePageNumber(extractedNum, pageNum, patternObj.type)) {
+            return { success: true, value: extractedNum, patternType: patternObj.type, confidence: patternObj.confidence };
+          } else if (extractedNum !== pageNum && patternObj.confidence >= 0.85) {
+            // 높은 신뢰도 패턴은 검증 완화
+            if (patternObj.type === 'fraction' || patternObj.type === 'of-pattern') {
+              return { success: true, value: extractedNum, needsValidation: true, patternType: patternObj.type, confidence: patternObj.confidence };
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  return { success: false };
+}
+
+// 전략 2: 전체 텍스트에서 패턴 검색 (하단 우선, 개선된 버전)
+function tryExtractFromFullText(pageText, pageNum) {
+  const validText = filterValidText(pageText);
+  if (!validText || validText.trim().length === 0) return { success: false };
+  
+  const lines = validText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  if (lines.length === 0) return { success: false };
+  
+  // 하단 70%에서 검색 (범위 확대)
+  const startIdx = Math.floor(lines.length * 0.3);
+  const searchLines = lines.slice(startIdx);
+  
+  const patterns = [
+    { pattern: /(\d{1,3})\s*\/\s*\d+/g, type: 'fraction', confidence: 0.9 },          // "53/124"
+    { pattern: /(\d{1,3})\s*of\s*\d+/gi, type: 'of-pattern', confidence: 0.9 },      // "53 of 124"
+    { pattern: /\b페이지\s*(\d{1,3})\b/gi, type: 'page-word', confidence: 0.8 },     // "페이지 53"
+    { pattern: /\bPage\s*(\d{1,3})\b/gi, type: 'page-word', confidence: 0.8 },       // "Page 53"
+    { pattern: /\bp\.\s*(\d{1,3})\b/gi, type: 'page-word', confidence: 0.75 },      // "p. 53"
+    { pattern: /\b(\d{1,3})\s*페이지\b/gi, type: 'page-word', confidence: 0.75 },  // "53 페이지"
+    { pattern: /\b(\d{1,2})\s*-\s*(\d{1,2})\s*\/\s*(\d{1,3})/g, type: 'fraction', confidence: 0.7 }, // "1-2 / 53"
+  ];
+  
+  const candidates = [];
+  
+  for (const patternObj of patterns) {
+    for (let lineIdx = 0; lineIdx < searchLines.length; lineIdx++) {
+      const line = searchLines[lineIdx];
+      const matches = [...line.matchAll(patternObj.pattern)];
+      for (const match of matches) {
+        let num = parseInt(match[1], 10);
+        // "1-2 / 53" 같은 패턴은 마지막 숫자 사용
+        if (match[3]) {
+          num = parseInt(match[3], 10);
+        }
+        if (num >= 1 && num <= 999 && num !== pageNum) {
+          const distance = lineIdx; // 하단으로부터의 거리
+          candidates.push({ 
+            num, 
+            line, 
+            distance, 
+            patternType: patternObj.type,
+            confidence: patternObj.confidence
+          });
+        }
+      }
+    }
+  }
+  
+  if (candidates.length > 0) {
+    // 하단에 가까우면서 신뢰도 높은 숫자 선택
+    candidates.sort((a, b) => {
+      // 거리 우선, 그 다음 신뢰도
+      if (a.distance !== b.distance) return a.distance - b.distance;
+      return b.confidence - a.confidence;
+    });
+    
+    const selected = candidates[0];
+    if (validatePageNumber(selected.num, pageNum, selected.patternType)) {
+      return { success: true, value: selected.num, patternType: selected.patternType, confidence: selected.confidence };
+    } else if (selected.confidence >= 0.8) {
+      return { success: true, value: selected.num, needsValidation: true, patternType: selected.patternType, confidence: selected.confidence };
+    }
+  }
+  
+  return { success: false };
+}
+
+// 전략 3: 중앙 하단 영역 검색 (라인 길이 기반)
+function tryExtractFromCenterBottom(pageText, pageNum) {
+  const lines = pageText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  if (lines.length < 3) return { success: false };
+  
+  // 하단 30% 라인
+  const bottomStart = Math.floor(lines.length * 0.7);
+  const bottomLines = lines.slice(bottomStart);
+  
+  // 페이지 번호 패턴 (전략1과 동일)
+  const pageNumberPatterns = [
+    /^--\s*(\d{1,3})\s*of\s*\d+\s*--$/i,
+    /^-\s*(\d{1,3})\s*of\s*\d+\s*-$/i,
+    /^\s*(\d{1,3})\s*of\s*\d+\s*$/i,
+    /^(\d{1,3})\s*\/\s*\d+$/,
+    /^(\d{1,3})\s*of\s*\d+$/i,
+  ];
+  
+  // 중앙 정렬된 짧은 라인 찾기 (페이지 번호는 보통 짧음)
+  const shortLines = bottomLines.filter(line => line.length > 0 && line.length < 30);
+  
+  for (const line of shortLines.reverse()) {
+    for (const pattern of pageNumberPatterns) {
+      const match = line.match(pattern);
+      if (match && match[1]) {
+        const num = parseInt(match[1], 10);
+        if (num >= 1 && num <= 999 && num !== pageNum) {
+          // 패턴 타입 확인
+          const isHighConfidence = /of|of\s*\d+|\/\s*\d+/.test(line);
+          const patternType = isHighConfidence ? 'of-pattern' : 'single-digit';
+          if (validatePageNumber(num, pageNum, patternType)) {
+            console.log(`  📄 [전략3] 페이지 ${pageNum}에서 논리적 페이지 번호 ${num} 발견 (중앙 하단, 라인: "${line}")`);
+            return { success: true, value: num, patternType };
+          } else {
+            return { success: true, value: num, needsValidation: true, patternType };
+          }
+        }
+      }
+    }
+  }
+  
+  return { success: false };
+}
+
+// 전략 4: 분수 패턴 검색 (예: "53/124", 개선된 버전)
+function tryExtractFromFraction(pageText, pageNum) {
+  const validText = filterValidText(pageText);
+  if (!validText || validText.trim().length === 0) return { success: false };
+  
+  // 다양한 분수 패턴 시도
+  const fractionPatterns = [
+    /(\d{1,3})\s*\/\s*(\d{1,3})/g,           // "53/124"
+    /(\d{1,3})\s*-\s*(\d{1,3})\s*\/\s*(\d{1,3})/g,  // "1-2 / 124" (마지막 숫자 사용)
+    /(\d{1,3})\s*of\s*(\d{1,3})/gi,          // "53 of 124"
+  ];
+  
+  const allMatches = [];
+  
+  for (const pattern of fractionPatterns) {
+    const matches = [...validText.matchAll(pattern)];
+    for (const match of matches) {
+      let numerator = parseInt(match[1], 10);
+      let denominator = parseInt(match[match.length - 1], 10); // 마지막 숫자를 분모로
+      
+      // "1-2 / 124" 같은 패턴 처리
+      if (match[3]) {
+        numerator = parseInt(match[3], 10);
+      }
+      
+      if (numerator >= 1 && numerator <= 999 && denominator >= 1 && denominator <= 1000) {
+        const matchIndex = match.index || 0;
+        const lineIndex = validText.substring(0, matchIndex).split('\n').length - 1;
+        const totalLines = validText.split('\n').length;
+        const positionRatio = lineIndex / totalLines;
+        
+        allMatches.push({
+          numerator,
+          denominator,
+          positionRatio,
+          lineIndex,
+          matchText: match[0]
+        });
+      }
+    }
+  }
+  
+  if (allMatches.length > 0) {
+    // 하단에 가까우면서 합리적인 범위의 분수 선택
+    allMatches.sort((a, b) => {
+      // 위치 우선 (하단 우선)
+      if (Math.abs(a.positionRatio - 1.0) !== Math.abs(b.positionRatio - 1.0)) {
+        return Math.abs(b.positionRatio - 1.0) - Math.abs(a.positionRatio - 1.0);
+      }
+      // 분모가 큰 것 우선 (더 정확할 가능성)
+      return b.denominator - a.denominator;
+    });
+    
+    const selected = allMatches[0];
+    // 분자가 분모보다 작거나 같고, 합리적인 범위인 경우
+    if (selected.numerator <= selected.denominator) {
+      if (validatePageNumber(selected.numerator, pageNum, 'fraction')) {
+        return { success: true, value: selected.numerator, patternType: 'fraction', confidence: 0.95 };
+      } else {
+        return { success: true, value: selected.numerator, needsValidation: true, patternType: 'fraction', confidence: 0.95 };
+      }
+    }
+  }
+  
+  return { success: false };
+}
+
+// 전략 5: 유사도 기반 검색 (매우 엄격한 조건 - 본문 숫자 제외)
+function tryExtractBySimilarity(pageText, pageNum) {
+  const validText = filterValidText(pageText);
+  if (!validText || validText.trim().length === 0) return { success: false };
+  
+  const lines = validText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  if (lines.length === 0) return { success: false };
+  
+  // 하단 마지막 3줄만 검색 (매우 제한적)
+  const bottomStart = Math.max(0, lines.length - 3);
+  const bottomLines = lines.slice(bottomStart);
+  
+  const candidates = [];
+  
+  // 단독 숫자 찾기 (매우 엄격한 조건)
+  for (let i = bottomLines.length - 1; i >= 0; i--) {
+    const line = bottomLines[i];
+    
+    // 정확히 숫자만 있는 매우 짧은 라인 (3자 이하만, 마지막 2줄만)
+    if (/^\s*\d{1,3}\s*$/.test(line) && line.trim().length <= 3 && i <= 1) {
+      const num = parseInt(line.trim(), 10);
+      if (num >= 1 && num <= 999 && num !== pageNum) {
+        const diff = Math.abs(num - pageNum);
+        
+        // 뷰어 인덱스와 차이가 너무 크면 본문 숫자 (50 이내만 허용)
+        if (diff > 50) continue;
+        
+        // 매우 작은 숫자(1-10)는 마지막 줄만 허용
+        if (num <= 10 && i > 0) continue;
+        
+        // 뷰어 인덱스보다 너무 작으면 본문 숫자 가능성
+        if (num < pageNum * 0.2) continue;
+        
+        const distance = bottomLines.length - 1 - i;
+        candidates.push({ num, distance, line });
+      }
+    }
+  }
+  
+  if (candidates.length > 0) {
+    // 마지막 줄에 가까운 숫자 선택
+    candidates.sort((a, b) => a.distance - b.distance);
+    const selected = candidates[0];
+    
+    if (validatePageNumber(selected.num, pageNum, 'single-digit')) {
+      return { success: true, value: selected.num, patternType: 'single-digit', confidence: 0.5 };
+    }
+  }
+  
+  return { success: false };
 }
 
 // ✅ 범용적 키워드 추출: 모든 한글 단어 자동 추출 + 동의어 확장
@@ -565,9 +1537,9 @@ async function processPdfStreaming(pdfFile, pdfPath, index, totalFiles) {
     console.log(`[2/3] 문서 메타데이터 저장 중...`);
     const documentId = await addDocumentToFirestore(pdfFile, pdfData, []);
     
-    // 스트리밍 청크 처리
+    // 스트리밍 청크 처리 (페이지별 데이터 전달)
     console.log(`[3/3] 스트리밍 청크 처리 중...`);
-    const addedChunks = await processChunksStreaming(documentId, pdfFile, pdfData.text, pdfData.pages || 0);
+    const addedChunks = await processChunksStreaming(documentId, pdfFile, pdfData.text, pdfData.pagesData || []);
     
     console.log(`[4/4] 메모리 정리 중...`);
     

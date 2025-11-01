@@ -26,3 +26,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# PDF files (large files - may be stored separately)
+# public/pdf/*.pdf
+# Uncomment above line if PDF files should be excluded
+
+# Test and temporary files
+*.test.js
+*.spec.js

@@ -10,12 +10,12 @@ import { getFirestore, collection, getDocs, query, limit } from 'firebase/firest
 
 // Firebase 설정
 const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY || "AIzaSyA0zyaTI--MHXoNPYlTf95S6iJu67XdRic",
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "chat6-4b97d.firebaseapp.com",
-  projectId: process.env.FIREBASE_PROJECT_ID || "chat6-4b97d",
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "chat6-4b97d.firebasestorage.app",
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "437591723431",
-  appId: process.env.FIREBASE_APP_ID || "1:437591723431:web:9f228e7d46f33f9d49fa82"
+  apiKey: process.env.FIREBASE_API_KEY || "AIzaSyDyx_GGIDteLNZKspL0RqLdNfMA-uLXwq0",
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "chat7-88761.firebaseapp.com",
+  projectId: process.env.FIREBASE_PROJECT_ID || "chat7-88761",
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "chat7-88761.firebasestorage.app",
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "1090093126813",
+  appId: process.env.FIREBASE_APP_ID || "1:1090093126813:web:3f8872dfe3c4f13c92f074"
 };
 
 async function validateFirestoreData() {

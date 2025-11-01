@@ -104,7 +104,10 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     const filename = pdfFilename || document?.filename || '';
     if (!filename) return '';
     const encodedFilename = encodeURIComponent(filename);
-    return `/chat6v/pdf/${encodedFilename}`;
+    // 개발 환경과 프로덕션 환경 모두 지원
+    const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const basePath = isDevelopment ? '/pdf' : '/chat6v/pdf';
+    return `${basePath}/${encodedFilename}`;
   }, [pdfFilename, document?.filename]);
   
   // 현재 페이지의 청크 추출
@@ -872,8 +875,60 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
         <div className="flex items-center justify-between mb-2 gap-2">
           <h2 className="text-lg font-semibold text-brand-text-primary truncate max-w-[60%]">{documentTitle}</h2>
           <div className="flex items-center gap-2 flex-nowrap">
+            {/* 뷰 모드 토글 버튼 */}
+            <button
+              onClick={() => {
+                if (pdfViewerMode === 'text') {
+                  // PDF 뷰 모드로 전환 시 새 창에서 PDF 열기
+                  if (pdfUrl && pdfCurrentPage > 0) {
+                    try {
+                      // PDF URL을 절대 경로로 변환
+                      const absolutePdfUrl = pdfUrl.startsWith('http://') || pdfUrl.startsWith('https://')
+                        ? pdfUrl
+                        : `${window.location.origin}${pdfUrl}`;
+                      
+                      // 새 창에서 PDF 뷰어 열기
+                      const viewerUrl = `/pdf-viewer.html?url=${encodeURIComponent(absolutePdfUrl)}&page=${pdfCurrentPage}&title=${encodeURIComponent(documentTitle || 'PDF 문서')}`;
+                      
+                      console.log('📄 PDF 뷰어 새 창 열기:', viewerUrl);
+                      console.log('📄 PDF 파일 URL:', absolutePdfUrl);
+                      console.log('📄 현재 페이지:', pdfCurrentPage);
+                      
+                      const newWindow = window.open(
+                        viewerUrl,
+                        'pdfViewer',
+                        'width=1200,height=800,scrollbars=yes,resizable=yes,toolbar=no,location=no,menubar=no'
+                      );
+                      
+                      if (newWindow) {
+                        console.log('✅ 새 창 열기 성공');
+                      } else {
+                        console.error('❌ 새 창 열기 실패 - 팝업이 차단되었을 수 있습니다.');
+                        const confirmOpen = window.confirm('팝업이 차단되었습니다. 현재 창에서 PDF를 열까요?');
+                        if (confirmOpen) {
+                          window.location.href = viewerUrl;
+                        }
+                      }
+                    } catch (error) {
+                      console.error('❌ PDF 뷰어 열기 오류:', error);
+                    }
+                  } else {
+                    console.warn('⚠️ PDF URL 또는 페이지 정보가 없습니다.');
+                    // PDF 정보가 없으면 기존 방식대로 상태만 변경
+                    onViewModeChange?.('pdf');
+                  }
+                } else {
+                  // 텍스트 뷰로 전환
+                  onViewModeChange?.('text');
+                }
+              }}
+              className="px-3 py-1 bg-brand-secondary text-brand-text-primary rounded text-xs hover:bg-opacity-80 transition-colors whitespace-nowrap"
+              title={pdfViewerMode === 'text' ? '새 창에서 PDF 뷰어 열기' : '텍스트 뷰로 전환'}
+            >
+              {pdfViewerMode === 'text' ? '📄 PDF 뷰' : '📝 텍스트 뷰'}
+            </button>
             {/* 컨텍스트 모드 표시 */}
-            {highlightedChunkId && getPaginatedChunks().length > 0 && (
+            {highlightedChunkId && getPaginatedChunks().length > 0 && pdfViewerMode === 'text' && (
               <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs whitespace-nowrap">
                 컨텍스트 모드 • {getPaginatedChunks().length}개 항목 표시 중
               </span>
@@ -953,15 +1008,54 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
         </div>
       </div>
 
-      {/* 컨텐츠 영역 - 고정 높이 1000px, 스크롤 포함 (텍스트 전용) */}
-      <div className="min-h-0 overflow-hidden">
-        {/* 텍스트 뷰 (청크 목록) */}
-        <div className="relative h-[1000px]">
-          <div
-            ref={scrollContainerRef}
-            onWheel={handleWheelInScrollArea}
-            className="h-full overflow-y-auto p-4"
-          >
+      {/* 컨텐츠 영역 - PDF 뷰어 또는 텍스트 뷰 */}
+      <div className="min-h-0 overflow-hidden flex-1">
+        {pdfViewerMode === 'pdf' && pdfUrl ? (
+          // PDF 뷰어 모드
+          <EmbedPdfViewer
+            pdfUrl={pdfUrl}
+            currentPage={pdfCurrentPage}
+            onPageChange={(page) => {
+              if (onPdfPageChange) {
+                onPdfPageChange(page);
+              }
+            }}
+            onDocumentLoad={(numPages) => {
+              console.log(`✅ PDF 로드 완료: ${numPages}페이지`);
+            }}
+            onError={(error) => {
+              console.error('❌ PDF 로드 에러:', error);
+              // PDF 로드 실패 시 자동으로 텍스트 뷰로 전환
+              if (onViewModeChange) {
+                console.log('⚠️ PDF 로드 실패로 텍스트 뷰로 전환');
+                setTimeout(() => {
+                  onViewModeChange('text');
+                }, 2000);
+              }
+            }}
+          />
+        ) : pdfViewerMode === 'pdf' && !pdfUrl ? (
+          // PDF 모드이지만 URL이 없는 경우
+          <div className="h-full flex items-center justify-center bg-brand-surface">
+            <div className="text-center text-brand-text-secondary p-8">
+              <div className="text-yellow-500 mb-4 text-lg">⚠️ PDF 파일을 찾을 수 없습니다</div>
+              <div className="text-sm mb-4">파일명 정보가 없어 PDF 뷰어를 표시할 수 없습니다.</div>
+              <button
+                onClick={() => onViewModeChange?.('text')}
+                className="px-4 py-2 bg-brand-primary text-white rounded hover:bg-blue-600 transition-colors"
+              >
+                텍스트 뷰로 전환
+              </button>
+            </div>
+          </div>
+        ) : (
+          // 텍스트 뷰 모드 (기존 코드)
+          <div className="relative h-[1000px]">
+            <div
+              ref={scrollContainerRef}
+              onWheel={handleWheelInScrollArea}
+              className="h-full overflow-y-auto p-4"
+            >
               <div className="space-y-4">
               {getPaginatedChunks().map((chunk, index) => {
               const isHighlighted = highlightedChunkId === chunk.id;
@@ -1065,12 +1159,13 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                         </div>
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-          )}
-        </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

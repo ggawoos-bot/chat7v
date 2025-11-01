@@ -1,12 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-// PDF.js Worker 파일을 로컬에서 직접 import (CDN 대신 로컬 파일 사용)
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// CSS 스타일 import (react-pdf의 스타일)
+// Note: react-pdf v10에서는 CSS가 자동으로 포함되지만, 필요시 명시적으로 import
 
-// PDF.js Worker 설정 (로컬 파일 사용)
+// PDF.js Worker 파일 경로 설정 (최적화된 버전)
 if (typeof window !== 'undefined') {
-  pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-  console.log('📦 PDF.js Worker 로드: 로컬 파일 사용', pdfjsWorker);
+  // CDN을 기본으로 사용 (안정적이고 빠름)
+  // 로컬 worker가 필요하면 나중에 변경 가능
+  const pdfjsVersion = pdfjs.version || '3.11.174';
+  pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.worker.min.js`;
+  console.log(`📦 PDF.js Worker 설정 (CDN): v${pdfjsVersion}`);
 }
 
 interface EmbedPdfViewerProps {
@@ -29,31 +32,63 @@ export const EmbedPdfViewer: React.FC<EmbedPdfViewerProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // PDF URL을 절대 경로로 변환
-  const absolutePdfUrl = React.useMemo(() => {
-    if (!pdfUrl) {
+  // PDF URL을 절대 경로로 변환 (개선된 버전)
+  const absolutePdfUrl = useMemo(() => {
+    if (!pdfUrl || pdfUrl.trim() === '') {
       console.warn('⚠️ PDF URL이 없습니다:', pdfUrl);
       return '';
     }
     
+    const trimmedUrl = pdfUrl.trim();
+    
     // 이미 절대 URL인 경우 그대로 사용
-    if (pdfUrl.startsWith('http://') || pdfUrl.startsWith('https://')) {
-      return pdfUrl;
+    if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
+      return trimmedUrl;
     }
     
-    // 상대 경로인 경우 현재 도메인 기준으로 절대 경로 생성
-    if (pdfUrl.startsWith('./')) {
-      return `${window.location.origin}${pdfUrl.substring(1)}`;
+    // 상대 경로 처리
+    if (trimmedUrl.startsWith('./')) {
+      return `${window.location.origin}${trimmedUrl.substring(1)}`;
     }
     
-    // 다른 상대 경로인 경우
-    if (pdfUrl.startsWith('/')) {
-      return `${window.location.origin}${pdfUrl}`;
+    // 절대 경로로 시작하는 경우
+    if (trimmedUrl.startsWith('/')) {
+      return `${window.location.origin}${trimmedUrl}`;
     }
     
     // 기본적으로 현재 도메인 기준으로 처리
-    return `${window.location.origin}/${pdfUrl}`;
+    return `${window.location.origin}/${trimmedUrl}`;
   }, [pdfUrl]);
+
+  // PDF 파일 유효성 검사 (HEAD 요청으로 파일 존재 확인)
+  const [isValidPdf, setIsValidPdf] = useState<boolean | null>(null);
+  
+  useEffect(() => {
+    if (!absolutePdfUrl) {
+      setIsValidPdf(null);
+      return;
+    }
+
+    // PDF 파일 존재 여부 확인
+    const checkPdfExists = async () => {
+      try {
+        const response = await fetch(absolutePdfUrl, { 
+          method: 'HEAD',
+          cache: 'no-cache'
+        });
+        setIsValidPdf(response.ok && response.headers.get('content-type')?.includes('pdf'));
+        
+        if (!response.ok) {
+          console.warn(`⚠️ PDF 파일을 찾을 수 없음: ${response.status} ${response.statusText}`);
+        }
+      } catch (error) {
+        console.error('❌ PDF 파일 검사 실패:', error);
+        setIsValidPdf(false);
+      }
+    };
+
+    checkPdfExists();
+  }, [absolutePdfUrl]);
 
   // PDF URL 변경 시 로딩 상태 초기화
   useEffect(() => {
@@ -98,15 +133,34 @@ export const EmbedPdfViewer: React.FC<EmbedPdfViewerProps> = ({
     }
   };
 
-  // PDF 로드 에러 처리
-  const onDocumentLoadError = (error: Error) => {
+  // PDF 로드 에러 처리 (개선된 버전)
+  const onDocumentLoadError = useCallback((error: Error) => {
     console.error('❌ PDF 로드 오류:', error);
     console.error('❌ PDF URL:', absolutePdfUrl);
-    const errorMessage = `PDF 로드 실패: ${error.message}`;
+    
+    // 에러 타입별 상세 메시지
+    let errorMessage = `PDF 로드 실패: ${error.message}`;
+    
+    if (error.message.includes('Missing PDF')) {
+      errorMessage = 'PDF 파일을 찾을 수 없습니다. 파일 경로를 확인하세요.';
+    } else if (error.message.includes('Invalid PDF')) {
+      errorMessage = '유효하지 않은 PDF 파일입니다.';
+    } else if (error.message.includes('Network')) {
+      errorMessage = '네트워크 오류가 발생했습니다. 연결을 확인하세요.';
+    }
+    
     setError(errorMessage);
     setLoading(false);
     onError?.(errorMessage);
-  };
+  }, [absolutePdfUrl, onError]);
+
+  // 재시도 함수
+  const handleRetry = useCallback(() => {
+    setError(null);
+    setLoading(true);
+    setNumPages(0);
+    setPageNumber(1);
+  }, []);
 
   // 페이지 변경 처리
   const changePage = (offset: number) => {
@@ -132,6 +186,26 @@ export const EmbedPdfViewer: React.FC<EmbedPdfViewerProps> = ({
           <div className="text-red-500 mb-4 text-lg">❌ PDF URL 오류</div>
           <div className="text-gray-600 mb-4 text-sm">PDF 파일을 찾을 수 없습니다.</div>
           <div className="text-gray-500 text-xs">파일명이 제공되지 않았습니다.</div>
+          <div className="text-gray-400 text-xs mt-2">URL: {pdfUrl || '(없음)'}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // PDF 파일이 유효하지 않은 경우 (검사 완료 후)
+  if (isValidPdf === false && !loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <div className="text-red-500 mb-4 text-lg">❌ PDF 파일을 찾을 수 없음</div>
+          <div className="text-gray-600 mb-4 text-sm">해당 경로에 PDF 파일이 존재하지 않습니다.</div>
+          <div className="text-gray-500 text-xs mb-4">URL: {absolutePdfUrl}</div>
+          <button
+            onClick={handleRetry}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+          >
+            다시 시도
+          </button>
         </div>
       </div>
     );
@@ -153,10 +227,7 @@ export const EmbedPdfViewer: React.FC<EmbedPdfViewerProps> = ({
           <div className="text-gray-600 mb-4 text-sm">{error}</div>
           <div className="text-gray-500 text-xs mb-4">URL: {absolutePdfUrl}</div>
           <button
-            onClick={() => {
-              setError(null);
-              setLoading(true);
-            }}
+            onClick={handleRetry}
             className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
           >
             다시 시도
@@ -230,6 +301,17 @@ export const EmbedPdfViewer: React.FC<EmbedPdfViewerProps> = ({
               renderAnnotationLayer={true}
               className="shadow-lg"
               width={window.innerWidth > 768 ? 800 : window.innerWidth - 64}
+              loading={
+                <div className="flex items-center justify-center" style={{ minHeight: '600px' }}>
+                  <div className="text-gray-500">페이지 로딩 중...</div>
+                </div>
+              }
+              onLoadError={(error) => {
+                console.error('페이지 로드 오류:', error);
+              }}
+              onRenderError={(error) => {
+                console.error('페이지 렌더링 오류:', error);
+              }}
             />
           </Document>
         ) : (

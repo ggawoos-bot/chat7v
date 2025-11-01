@@ -100,7 +100,8 @@ export default defineConfig(({ mode }) => {
             admin: path.resolve(__dirname, 'admin.html'),
             chat: path.resolve(__dirname, 'chat_index.html'),
             simple: path.resolve(__dirname, 'simple.html'),
-            test: path.resolve(__dirname, 'index2.html')
+            test: path.resolve(__dirname, 'index2.html'),
+            pdfViewer: path.resolve(__dirname, 'pdf-viewer.html')
           }
         }
       }
