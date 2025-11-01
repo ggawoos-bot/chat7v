@@ -636,45 +636,79 @@ async function saveChunkToFirestore(documentId, filename, chunk, index, position
 }
 
 // ✅ 정확한 페이지 번호 계산 함수 (페이지별 데이터 사용) - 뷰어 인덱스와 논리적 페이지 번호 모두 반환
+// 개선: 청크의 시작 위치를 우선적으로 사용하여 오버랩으로 인한 페이지 오매핑 방지
 function getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData) {
   if (!pagesData || pagesData.length === 0) {
     return { pageIndex: 1, logicalPageNumber: 1 };
   }
   
-  // 청크가 속한 페이지 찾기
-  // 청크의 중간 지점이 속한 페이지를 우선 선택
-  const chunkCenter = (chunkStartPos + chunkEndPos) / 2;
+  // 1단계: 청크의 시작 위치가 속한 페이지를 우선 찾기 (가장 정확함)
+  for (let i = 0; i < pagesData.length; i++) {
+    const page = pagesData[i];
+    if (chunkStartPos >= page.startPosition && chunkStartPos <= page.endPosition) {
+      return {
+        pageIndex: page.pageNumber, // 뷰어 인덱스 (1-based)
+        logicalPageNumber: page.logicalPageNumber || page.pageNumber // 논리적 페이지 번호
+      };
+    }
+  }
+  
+  // 2단계: 시작 위치로 찾지 못한 경우, 청크의 끝 위치가 속한 페이지 찾기
+  for (let i = 0; i < pagesData.length; i++) {
+    const page = pagesData[i];
+    if (chunkEndPos >= page.startPosition && chunkEndPos <= page.endPosition) {
+      return {
+        pageIndex: page.pageNumber, // 뷰어 인덱스 (1-based)
+        logicalPageNumber: page.logicalPageNumber || page.pageNumber // 논리적 페이지 번호
+      };
+    }
+  }
+  
+  // 3단계: 시작/끝 위치로도 찾지 못한 경우, 오버랩 비율로 판단
+  // 여러 페이지에 걸쳐 있을 때 가장 많은 내용이 있는 페이지 선택
+  let bestPage = null;
+  let maxOverlapRatio = 0;
+  const chunkLength = chunkEndPos - chunkStartPos;
   
   for (let i = 0; i < pagesData.length; i++) {
     const page = pagesData[i];
     
-    // 청크의 중심점이 이 페이지 범위 내에 있는지 확인
+    // 청크가 페이지 경계에 걸쳐있는 경우
+    if (chunkStartPos < page.endPosition && chunkEndPos > page.startPosition) {
+      const overlapStart = Math.max(chunkStartPos, page.startPosition);
+      const overlapEnd = Math.min(chunkEndPos, page.endPosition);
+      const overlap = overlapEnd - overlapStart;
+      const overlapRatio = overlap / chunkLength;
+      
+      // 가장 큰 오버랩 비율을 가진 페이지 선택
+      if (overlapRatio > maxOverlapRatio) {
+        maxOverlapRatio = overlapRatio;
+        bestPage = page;
+      }
+    }
+  }
+  
+  // 오버랩이 30% 이상인 페이지가 있으면 그 페이지 반환
+  if (bestPage && maxOverlapRatio >= 0.3) {
+    return {
+      pageIndex: bestPage.pageNumber, // 뷰어 인덱스 (1-based)
+      logicalPageNumber: bestPage.logicalPageNumber || bestPage.pageNumber // 논리적 페이지 번호
+    };
+  }
+  
+  // 4단계: 폴백 - 청크의 중심점이 속한 페이지 찾기
+  const chunkCenter = (chunkStartPos + chunkEndPos) / 2;
+  for (let i = 0; i < pagesData.length; i++) {
+    const page = pagesData[i];
     if (chunkCenter >= page.startPosition && chunkCenter <= page.endPosition) {
       return {
         pageIndex: page.pageNumber, // 뷰어 인덱스 (1-based)
         logicalPageNumber: page.logicalPageNumber || page.pageNumber // 논리적 페이지 번호
       };
     }
-    
-    // 청크가 페이지 경계에 걸쳐있는 경우
-    if (chunkStartPos < page.endPosition && chunkEndPos > page.startPosition) {
-      // 청크의 대부분이 속한 페이지 결정
-      const overlapStart = Math.max(chunkStartPos, page.startPosition);
-      const overlapEnd = Math.min(chunkEndPos, page.endPosition);
-      const overlap = overlapEnd - overlapStart;
-      const chunkLength = chunkEndPos - chunkStartPos;
-      
-      // 청크의 50% 이상이 이 페이지에 있으면 이 페이지 선택
-      if (overlap >= chunkLength * 0.5) {
-        return {
-          pageIndex: page.pageNumber, // 뷰어 인덱스 (1-based)
-          logicalPageNumber: page.logicalPageNumber || page.pageNumber // 논리적 페이지 번호
-        };
-      }
-    }
   }
   
-  // 마지막 페이지로 폴백
+  // 최종 폴백: 마지막 페이지
   const lastPage = pagesData[pagesData.length - 1];
   return {
     pageIndex: lastPage?.pageNumber || 1,

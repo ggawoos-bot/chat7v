@@ -249,19 +249,43 @@ function App() {
           const pdfUrl = `${basePath}/${encodedFilename}`;
           const absolutePdfUrl = window.location.origin + pdfUrl;
           
-          // 하이라이트할 키워드 추출 (질문, 청크 키워드, 청크 내용의 주요 단어)
+          // 하이라이트할 키워드 추출 (개선: 정확하고 적은 키워드만 선택)
           const highlightKeywords: string[] = [];
+          let coreSearchText: string | undefined = undefined;
           
-          // 1. 질문에서 주요 단어 추출 (2글자 이상, 조사 제거)
+          // ✅ 개선: 청크 내용에서 핵심 문구 추출 (20-50자 정도의 짧은 핵심 문장)
+          if (chunkContent && chunkContent.length > 0) {
+            // 청크 내용의 핵심 문구 추출 (문장 경계에서)
+            const sentences = chunkContent.split(/[.。!！?？\n]/).filter(s => s.trim().length >= 10);
+            if (sentences.length > 0) {
+              // 첫 번째 문장을 핵심 문구로 사용 (30자 이내)
+              const corePhrase = sentences[0].trim().substring(0, 30);
+              if (corePhrase.length >= 10) {
+                // 핵심 문구를 검색 텍스트로 사용 (키워드가 아닌)
+                coreSearchText = corePhrase;
+              }
+            }
+          }
+          
+          // ✅ 개선: 키워드는 최대 3개만 (가장 관련성 높은 것만)
+          // 1. 청크 키워드에서 최대 2개 (가장 관련성 높은 것, 20자 이하만)
+          if (keywords && Array.isArray(keywords) && keywords.length > 0) {
+            const validKeywords = keywords
+              .filter(k => k && k.trim().length >= 3 && k.trim().length <= 20)
+              .slice(0, 2);
+            highlightKeywords.push(...validKeywords);
+          }
+          
+          // 2. 질문에서 핵심 단어 최대 2개 (3글자 이상만)
           if (questionContent) {
-            const stopWords = ['은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '만', '조차', '마저', '까지', '부터', '에서', '에게', '한테', '께', '로', '으로', '것', '수', '있', '없', '되', '하', '등', '때', '경우', '위해', '때문', '인가', '인가요', '인지', '인지요', '있습니', '없습니', '입니다', '까요', '나요', '네요', '세요', '주세요', '해주세요', '이야', '이야요', '야', '어', '요'];
+            const stopWords = ['은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '만', '조차', '마저', '까지', '부터', '에서', '에게', '한테', '께', '로', '으로', '것', '수', '있', '없', '되', '하', '등', '때', '경우', '위해', '때문'];
             
             const questionWords = questionContent
               .replace(/[^\w가-힣\s]/g, ' ')
               .split(/\s+/)
               .filter(w => {
                 const word = w.trim();
-                return word.length >= 2 && !stopWords.includes(word);
+                return word.length >= 3 && !stopWords.includes(word); // ✅ 3글자 이상으로 변경
               })
               .map(word => {
                 // 조사 제거
@@ -272,32 +296,16 @@ function App() {
                 }
                 return word;
               })
-              .filter(w => w.length >= 2);
+              .filter(w => w.length >= 3) // ✅ 3글자 이상만
+              .slice(0, 2); // ✅ 최대 2개만
             
-            highlightKeywords.push(...questionWords.slice(0, 5)); // 최대 5개
+            highlightKeywords.push(...questionWords);
           }
           
-          // 2. 청크 키워드 추가
-          if (keywords && Array.isArray(keywords)) {
-            highlightKeywords.push(...keywords.slice(0, 5));
-          }
-          
-          // 3. 청크 내용에서 중요한 단어 추출 (옵션 - 짧은 문구 추출)
-          if (chunkContent && chunkContent.length > 0) {
-            // 청크 내용의 앞부분에서 주요 단어 추출
-            const contentSnippet = chunkContent.substring(0, 100)
-              .replace(/[^\w가-힣\s]/g, ' ')
-              .split(/\s+/)
-              .filter(w => w.trim().length >= 2)
-              .slice(0, 3); // 최대 3개
-            
-            highlightKeywords.push(...contentSnippet);
-          }
-          
-          // 중복 제거 및 최대 10개로 제한
+          // 중복 제거 및 최대 3개로 제한
           const uniqueKeywords = [...new Set(highlightKeywords)]
-            .filter(k => k && k.trim().length >= 2)
-            .slice(0, 10);
+            .filter(k => k && k.trim().length >= 3 && k.trim().length <= 20) // ✅ 3~20자만
+            .slice(0, 3); // ✅ 최대 3개로 제한
           
           // 기존 PDF 창이 열려있고 닫히지 않았는지 확인
           const existingWindow = pdfViewerWindowRef.current;
@@ -313,7 +321,7 @@ function App() {
                 type: 'changePage',
                 page: page,
                 highlight: uniqueKeywords.length > 0 ? uniqueKeywords : undefined,
-                searchText: chunkContent ? chunkContent.substring(0, 200) : undefined
+                searchText: coreSearchText || (chunkContent ? chunkContent.substring(0, 30) : undefined) // ✅ 핵심 문구만 또는 최대 30자
               };
               
               console.log('📤 기존 창에 메시지 전송:', message);
@@ -355,9 +363,11 @@ function App() {
             console.log('📄 하이라이트 키워드:', uniqueKeywords);
           }
           
-          // 청크 내용도 전달 (PDF에서 검색하기 위함 - 일부만)
-          if (chunkContent) {
-            const contentSnippet = chunkContent.substring(0, 200);
+          // ✅ 개선: 청크 내용도 전달 (핵심 문구만 또는 최대 30자)
+          if (coreSearchText) {
+            params.append('searchText', coreSearchText);
+          } else if (chunkContent) {
+            const contentSnippet = chunkContent.substring(0, 30);
             params.append('searchText', contentSnippet);
           }
           
