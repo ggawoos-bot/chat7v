@@ -87,11 +87,17 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           // ✅ 응답 검증 (잘못된 매핑 감지 및 경고)
           geminiService.validateAndFixReferences(fullResponse, chunkReferences);
           
+          // ✅ 참조 문장 추출 및 저장 (1번 개선 방안)
+          const updatedChunkReferences = geminiService.extractAndStoreReferencedSentences(
+            fullResponse,
+            chunkReferences
+          );
+          
           setMessages(prev => {
             const newMessages = [...prev];
             const lastMessage = newMessages[newMessages.length - 1];
             if (lastMessage.role === Role.MODEL) {
-              lastMessage.chunkReferences = chunkReferences;
+              lastMessage.chunkReferences = updatedChunkReferences;
             }
             return newMessages;
           });

@@ -875,6 +875,185 @@ Here is the source material:
     return words;
   }
 
+  /**
+   * AI 응답에서 참조 번호별로 실제 인용한 문장 추출 및 chunkReferences에 저장
+   */
+  extractAndStoreReferencedSentences(responseText: string, chunkReferences: any[]): any[] {
+    if (!responseText || !chunkReferences || chunkReferences.length === 0) {
+      return chunkReferences;
+    }
+
+    console.log('🔍 참조 문장 추출 시작:', {
+      responseLength: responseText.length,
+      chunkReferencesCount: chunkReferences.length
+    });
+
+    // 원숫자 매핑
+    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+    
+    // 각 chunkReference에 대해 참조 문장 추출
+    const updatedReferences = chunkReferences.map((chunkRef, index) => {
+      const refNumber = chunkRef.refId || (index + 1);
+      
+      // 1. 참조 번호 패턴 찾기 (**2**, ② 등)
+      const boldPattern = new RegExp(`\\*\\*${refNumber}\\*\\*`, 'g');
+      const circlePattern = circleNumbers[refNumber - 1] || '';
+      
+      let matchIndex = -1;
+      let matchText = '';
+      
+      // **2** 형식 찾기
+      const boldMatch = responseText.match(boldPattern);
+      if (boldMatch && boldMatch.length > 0) {
+        // 첫 번째 매칭 위치 사용
+        matchIndex = responseText.indexOf(boldMatch[0]);
+        matchText = boldMatch[0];
+      } else if (circlePattern) {
+        // ② 형식 찾기
+        const circleIndex = responseText.indexOf(circlePattern);
+        if (circleIndex >= 0) {
+          matchIndex = circleIndex;
+          matchText = circlePattern;
+        }
+      }
+      
+      if (matchIndex < 0) {
+        // 참조 번호를 찾지 못함
+        console.log(`⚠️ 참조 번호 ${refNumber}를 응답에서 찾지 못함`);
+        return chunkRef;
+      }
+      
+      // 2. 참조 번호 주변의 문맥 추출 (앞 200자 ~ 뒤 200자)
+      const contextStart = Math.max(0, matchIndex - 200);
+      const contextEnd = Math.min(responseText.length, matchIndex + matchText.length + 200);
+      const context = responseText.substring(contextStart, contextEnd);
+      
+      // 3. 문장 분할 (개선된 경계 인식)
+      const sentences = context
+        .split(/[.。!！?？\n]/)
+        .map(s => s.trim())
+        .filter(s => s.length >= 10);
+      
+      // 4. 참조 번호가 포함된 문장 또는 그 주변 문장 찾기
+      const refIndex = sentences.findIndex(s => s.includes(matchText));
+      
+      if (refIndex < 0) {
+        console.log(`⚠️ 참조 번호 ${refNumber} 주변 문장을 찾지 못함`);
+        return chunkRef;
+      }
+      
+      // 참조 번호가 포함된 문장 또는 그 앞 문장 선택
+      let targetSentence = '';
+      if (refIndex > 0 && sentences[refIndex].includes(matchText)) {
+        // 참조 번호 앞 문장이 더 의미 있을 수 있음
+        targetSentence = sentences[refIndex - 1] || sentences[refIndex];
+      } else {
+        targetSentence = sentences[refIndex];
+      }
+      
+      // 5. 참조 번호 제거 및 정리
+      const cleaned = targetSentence
+        .replace(/\*\*\d+\*\*/g, '') // **2** 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
+        .trim();
+      
+      if (cleaned.length < 15) {
+        console.log(`⚠️ 참조 번호 ${refNumber}의 추출된 문장이 너무 짧음: ${cleaned}`);
+        return chunkRef;
+      }
+      
+      // 6. 추출된 문장이 chunkContent에 포함되어 있는지 확인
+      const chunkContent = chunkRef.content || '';
+      const normalizedCleaned = this.normalizeTextForMatching(cleaned);
+      const normalizedChunk = this.normalizeTextForMatching(chunkContent);
+      
+      // 문장이 청크 내용에 포함되어 있는지 확인
+      const isIncluded = normalizedChunk.includes(normalizedCleaned);
+      
+      if (!isIncluded) {
+        // 정확히 일치하지 않으면 부분 매칭 시도 (최소 20자 이상)
+        const minMatchLength = 20;
+        let foundMatch = false;
+        let matchedSentence = '';
+        let matchedIndex = -1;
+        
+        // 청크 내용을 문장으로 분할하여 유사한 문장 찾기
+        const chunkSentences = chunkContent
+          .split(/[.。!！?？\n]/)
+          .map(s => s.trim())
+          .filter(s => s.length >= 10);
+        
+        for (let i = 0; i < chunkSentences.length; i++) {
+          const chunkSentence = chunkSentences[i];
+          const normalizedChunkSentence = this.normalizeTextForMatching(chunkSentence);
+          
+          // 부분 문자열 매칭 (최소 길이 확인)
+          if (normalizedCleaned.length >= minMatchLength && 
+              normalizedChunkSentence.length >= minMatchLength) {
+            // 한쪽이 다른 쪽에 포함되어 있는지 확인
+            if (normalizedChunkSentence.includes(normalizedCleaned.substring(0, minMatchLength)) ||
+                normalizedCleaned.includes(normalizedChunkSentence.substring(0, minMatchLength))) {
+              foundMatch = true;
+              matchedSentence = chunkSentence;
+              matchedIndex = i;
+              break;
+            }
+          }
+        }
+        
+        if (foundMatch) {
+          console.log(`✅ 참조 번호 ${refNumber}: 부분 매칭으로 문장 찾음 (인덱스: ${matchedIndex})`);
+          return {
+            ...chunkRef,
+            referencedSentence: matchedSentence,
+            referencedSentenceIndex: matchedIndex
+          };
+        } else {
+          console.log(`⚠️ 참조 번호 ${refNumber}: 청크 내용에서 매칭 문장을 찾지 못함`);
+          return chunkRef;
+        }
+      }
+      
+      // 7. 문장 인덱스 찾기
+      const chunkSentences = chunkContent
+        .split(/[.。!！?？\n]/)
+        .map(s => s.trim())
+        .filter(s => s.length >= 10);
+      
+      const sentenceIndex = chunkSentences.findIndex(s => {
+        const normalized = this.normalizeTextForMatching(s);
+        return normalized.includes(normalizedCleaned.substring(0, Math.min(20, normalizedCleaned.length))) ||
+               normalizedCleaned.includes(normalized.substring(0, Math.min(20, normalized.length)));
+      });
+      
+      console.log(`✅ 참조 번호 ${refNumber}: 문장 추출 성공 (인덱스: ${sentenceIndex >= 0 ? sentenceIndex : 'N/A'})`);
+      console.log(`   추출된 문장: ${cleaned.substring(0, 60)}...`);
+      
+      return {
+        ...chunkRef,
+        referencedSentence: cleaned.substring(0, 200), // 최대 200자로 제한
+        referencedSentenceIndex: sentenceIndex >= 0 ? sentenceIndex : undefined
+      };
+    });
+
+    const successCount = updatedReferences.filter(ref => ref.referencedSentence).length;
+    console.log(`✅ 참조 문장 추출 완료: ${successCount}/${chunkReferences.length}개 성공`);
+    
+    return updatedReferences;
+  }
+
+  /**
+   * 텍스트 정규화 (매칭용)
+   */
+  private normalizeTextForMatching(text: string): string {
+    return text
+      .replace(/\s+/g, ' ')           // 연속 공백을 하나로
+      .replace(/[\n\r\t]/g, ' ')      // 줄바꿈/탭을 공백으로
+      .replace(/[^\w가-힣\s:;]/g, '') // 특수문자 제거 (콜론, 세미콜론은 유지)
+      .toLowerCase()
+      .trim();
+  }
+
   // PDF.js를 로컬 파일에서 로드하는 함수 (최적화)
   private async loadPdfJs(): Promise<any> {
     if (window.pdfjsLib) {

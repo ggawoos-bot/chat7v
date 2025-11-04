@@ -24,6 +24,8 @@ export interface ChunkReference {
   filename?: string; // ✅ PDF 파일명 추가
   documentFilename?: string; // ✅ 별칭 추가
   refId?: number; // ✅ 참조 ID 추가 (1-based index)
+  referencedSentence?: string; // ✅ AI가 실제로 인용한 문장
+  referencedSentenceIndex?: number; // ✅ 청크 내에서의 문장 인덱스
   metadata?: {
     startPos: number;
     endPos: number;

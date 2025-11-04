@@ -145,14 +145,27 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
   };
 
   // ✅ 툴팁용 하이라이트 (키워드 + 가장 유사한 문장 강조)
-  const highlightForTooltip = (chunkContent: string, keywords?: string[], responseText?: string, referenceNumber?: number): string => {
+  const highlightForTooltip = (
+    chunkContent: string, 
+    keywords?: string[], 
+    responseText?: string, 
+    referenceNumber?: number,
+    referencedSentence?: string // ✅ AI가 실제로 인용한 문장
+  ): string => {
     // 1단계: 키워드 하이라이트
     let highlighted = highlightKeywords(chunkContent, keywords);
     
-    // 2단계: AI 응답에서 참조 번호 주변 문장 추출
+    // 2단계: 참조 문장 결정 (우선순위: referencedSentence > AI 응답에서 추출)
     let targetSentence: string | null = null;
-    if (responseText && referenceNumber) {
+    
+    // ✅ 1순위: referencedSentence 사용 (AI가 실제로 인용한 문장)
+    if (referencedSentence && referencedSentence.length >= 15) {
+      targetSentence = referencedSentence;
+      console.log('✅ 툴팁: referencedSentence 사용:', targetSentence.substring(0, 60));
+    } else if (responseText && referenceNumber) {
+      // 2순위: AI 응답에서 참조 번호 주변 문장 추출 (폴백)
       targetSentence = extractSentenceFromResponseForTooltip(responseText, referenceNumber);
+      console.log('✅ 툴팁: AI 응답에서 문장 추출:', targetSentence ? targetSentence.substring(0, 60) : null);
     }
     
     // 3단계: 가장 유사한 문장 찾기 및 강조
@@ -161,20 +174,54 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
       
       if (similarSentence && similarSentence.length >= 15) {
         // 유사한 문장을 진하게 표시 (다른 색상)
-        const escaped = similarSentence
-          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-          .substring(0, 150); // 너무 긴 문장은 잘라서 매칭
+        // 정규화된 매칭 (줄바꿈, 공백 정리)
+        const normalizeForMatch = (text: string) => 
+          text.replace(/\s+/g, ' ').replace(/[\n\r\t]/g, ' ').trim();
         
-        if (escaped.length >= 15) {
-          const regex = new RegExp(`(${escaped})`, 'gi');
-          highlighted = highlighted.replace(regex, (match) => {
-            // 이미 하이라이트된 부분은 제외
-            if (match.includes('<mark')) {
-              return match;
-            }
-            // 강조 표시 (진하게 + 파란색 배경)
-            return `<span class="bg-blue-100 font-bold text-blue-900 px-1 rounded">${match}</span>`;
-          });
+        const normalizedSimilar = normalizeForMatch(similarSentence);
+        const normalizedChunk = normalizeForMatch(chunkContent);
+        
+        // 정규화된 텍스트에서 매칭 시도
+        const matchIndex = normalizedChunk.indexOf(normalizedSimilar);
+        
+        if (matchIndex >= 0) {
+          // 원본 텍스트에서 해당 부분 찾기 (정규화 전 위치 근사)
+          const escaped = similarSentence
+            .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+            .substring(0, 200); // 최대 200자까지
+        
+          if (escaped.length >= 15) {
+            // 부분 매칭 허용 (더 유연한 정규식)
+            const partialEscaped = escaped.substring(0, Math.min(100, escaped.length));
+            const regex = new RegExp(`(${partialEscaped.replace(/\s+/g, '\\s+')})`, 'gi');
+            
+            highlighted = highlighted.replace(regex, (match) => {
+              // 이미 하이라이트된 부분은 제외
+              if (match.includes('<mark') || match.includes('<span')) {
+                return match;
+              }
+              // 강조 표시 (진하게 + 파란색 배경)
+              return `<span class="bg-blue-100 font-bold text-blue-900 px-1 rounded">${match}</span>`;
+            });
+            
+            console.log('✅ 툴팁: 문장 강조 완료:', similarSentence.substring(0, 60));
+          }
+        } else {
+          // 정규화된 매칭 실패 시 부분 매칭 시도
+          const partialMatch = normalizedSimilar.substring(0, Math.min(50, normalizedSimilar.length));
+          if (normalizedChunk.includes(partialMatch)) {
+            const escaped = partialMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(${escaped.replace(/\s+/g, '\\s+')})`, 'gi');
+            
+            highlighted = highlighted.replace(regex, (match) => {
+              if (match.includes('<mark') || match.includes('<span')) {
+                return match;
+              }
+              return `<span class="bg-blue-100 font-bold text-blue-900 px-1 rounded">${match}</span>`;
+            });
+            
+            console.log('✅ 툴팁: 부분 매칭으로 문장 강조 완료');
+          }
         }
       }
     }
@@ -223,12 +270,13 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
           const chunk = message.chunkReferences[chunkIndex];
           const content = chunk.content.substring(0, 2000) + (chunk.content.length > 2000 ? '...' : '');
           
-          // ✅ 개선: 키워드 + 가장 유사한 문장 강조
+          // ✅ 개선: referencedSentence가 있으면 우선 사용, 없으면 기존 방식 사용
           const highlightedContent = highlightForTooltip(
             content, 
             chunk.keywords, 
             message.content, 
-            referenceNumber
+            referenceNumber,
+            chunk.referencedSentence // ✅ 참조 문장 전달
           );
           
           // ✅ 위치 계산: 마우스 이벤트가 있으면 마우스 위치 사용, 없으면 버튼 위치 사용
@@ -326,7 +374,8 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
             chunkContent: chunk.content || chunk.text || '', // ✅ 청크 내용 (하이라이트용)
             keywords: chunk.keywords || [], // ✅ 청크 키워드 (하이라이트용)
             responseText: message.content, // ✅ AI 응답 텍스트 추가 (하이라이트용)
-            referenceNumber // ✅ 참조 번호 추가 (하이라이트용)
+            referenceNumber, // ✅ 참조 번호 추가 (하이라이트용)
+            referencedSentence: chunk.referencedSentence // ✅ AI가 실제로 인용한 문장 추가
           }
         }));
       }

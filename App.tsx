@@ -331,13 +331,20 @@ function App() {
     return longest.substring(0, 60);
   };
 
-  // 하이브리드 텍스트 추출 (1순위: AI 응답, 2순위: chunkContent, 3순위: 기본값)
+  // 하이브리드 텍스트 추출 (1순위: referencedSentence, 2순위: AI 응답, 3순위: chunkContent, 4순위: 기본값)
   const extractSearchText = (
     chunkContent: string | undefined,
     responseText: string | undefined,
-    referenceNumber: number
+    referenceNumber: number,
+    referencedSentence?: string // ✅ AI가 실제로 인용한 문장
   ): string | undefined => {
-    // 1순위: AI 응답에서 참조 번호 주변 문장 추출
+    // 1순위: referencedSentence 사용 (AI가 실제로 인용한 문장)
+    if (referencedSentence && referencedSentence.length >= 15) {
+      console.log('✅ referencedSentence 사용:', referencedSentence.substring(0, 60));
+      return referencedSentence.substring(0, 60); // 최대 60자
+    }
+    
+    // 2순위: AI 응답에서 참조 번호 주변 문장 추출
     if (responseText && referenceNumber > 0) {
       const sentenceFromResponse = extractSentenceFromResponse(responseText, referenceNumber);
       if (sentenceFromResponse) {
@@ -346,7 +353,7 @@ function App() {
       }
     }
     
-    // 2순위: chunkContent에서 가장 긴/핵심 문장 선택
+    // 3순위: chunkContent에서 가장 긴/핵심 문장 선택
     if (chunkContent) {
       const bestSentence = extractBestSentence(chunkContent);
       if (bestSentence) {
@@ -355,7 +362,7 @@ function App() {
       }
     }
     
-    // 3순위: 기본값 (첫 30자)
+    // 4순위: 기본값 (첫 30자)
     const fallback = chunkContent ? chunkContent.substring(0, 30) : undefined;
     console.log('⚠️ 기본값 사용:', fallback);
     return fallback;
@@ -365,8 +372,8 @@ function App() {
   useEffect(() => {
     const handleReferenceClick = (event: CustomEvent) => {
       console.log('📥 App.tsx에서 referenceClick 이벤트 수신:', event.detail);
-      const { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, responseText, referenceNumber } = event.detail;
-      console.log('📝 설정할 값:', { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords });
+      const { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, responseText, referenceNumber, referencedSentence } = event.detail;
+      console.log('📝 설정할 값:', { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, referencedSentence });
       
       // PDF 파일명과 페이지 정보가 있으면 새 창에서 PDF 열기
       // page는 뷰어 인덱스 (PDF.js에서 사용하는 1-based 인덱스)
@@ -382,8 +389,8 @@ function App() {
           // 하이라이트할 키워드 추출 (개선: 정확하고 적은 키워드만 선택)
           const highlightKeywords: string[] = [];
           
-          // ✅ 하이브리드 텍스트 추출 (AI 응답 우선, chunkContent 폴백)
-          const coreSearchText = extractSearchText(chunkContent, responseText, referenceNumber || 0);
+          // ✅ 하이브리드 텍스트 추출 (우선순위: referencedSentence > AI 응답 > chunkContent)
+          const coreSearchText = extractSearchText(chunkContent, responseText, referenceNumber || 0, referencedSentence);
           
           // ✅ 개선: 키워드는 최대 3개만 (가장 관련성 높은 것만)
           // 1. 청크 키워드에서 최대 2개 (가장 관련성 높은 것, 20자 이하만)
