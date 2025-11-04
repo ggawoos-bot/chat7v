@@ -65,9 +65,9 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
     
     if (matchIndex < 0) return null;
     
-    // 참조 번호 주변 문맥 추출
-    const start = Math.max(0, matchIndex - 100);
-    const end = Math.min(responseText.length, matchIndex + matchText.length + 100);
+    // ✅ 개선: 참조 번호 주변 문맥 추출 범위 확대 (앞 200자 ~ 뒤 200자)
+    const start = Math.max(0, matchIndex - 200);
+    const end = Math.min(responseText.length, matchIndex + matchText.length + 200);
     const context = responseText.substring(start, end);
     
     const sentences = context.split(/[.。!！?？\n]/).map(s => s.trim()).filter(s => s.length > 0);
@@ -75,15 +75,29 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
     
     if (refIndex >= 0) {
       let targetSentence = '';
+      // ✅ 개선: 참조 번호가 포함된 문장 찾기 로직 개선
       if (refIndex > 0 && sentences[refIndex].includes(matchText)) {
+        // 참조 번호 앞 문장이 더 의미 있을 수 있음
         targetSentence = sentences[refIndex - 1] || sentences[refIndex];
+      } else if (refIndex < sentences.length - 1) {
+        // 참조 번호 뒤 문장도 확인
+        const nextSentence = sentences[refIndex + 1];
+        if (nextSentence && nextSentence.length >= 15) {
+          targetSentence = nextSentence;
+        } else {
+          targetSentence = sentences[refIndex];
+        }
       } else {
         targetSentence = sentences[refIndex];
       }
       
+      // ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
-        .replace(/\*\*\d+\*\*/g, '')
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '')
+        .replace(/\*\*\d+\*\*/g, '') // **2** 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
+        .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
+        .replace(/\*\*/g, '') // ✅ 남은 ** 제거
+        .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
         .trim();
       
       if (cleaned.length >= 15) {

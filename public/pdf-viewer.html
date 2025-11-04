@@ -509,7 +509,18 @@
       });
     }
     
-    // 하이라이트 적용 함수 (개선된 버전: 정확한 텍스트 매칭)
+    // ✅ 텍스트 정규화 함수 (매칭용) - 공백, 특수문자 정규화로 매칭 정확도 향상
+    function normalizeTextForMatching(text) {
+      if (!text) return '';
+      return text
+        .replace(/\s+/g, ' ')           // 연속 공백을 하나로
+        .replace(/[\n\r\t]/g, ' ')      // 줄바꿈/탭을 공백으로
+        .replace(/[^\w가-힣\s:;]/g, '') // 특수문자 제거 (한글, 영문, 숫자, 콜론, 세미콜론만 유지)
+        .toLowerCase()
+        .trim();
+    }
+    
+    // 하이라이트 적용 함수 (개선된 버전: 정확한 텍스트 매칭 + 텍스트 정규화)
     function applyHighlight(textLayer, keywords, searchText) {
       if (!textLayer || (!keywords.length && !searchText)) {
         console.log('⚠️ 하이라이트할 키워드나 텍스트가 없습니다.');
@@ -531,15 +542,15 @@
           .split(',')
           .map(q => q.trim())
           .filter(q => q.length >= 3) // 최소 3자 이상
-          .map(q => q.toLowerCase());
+          .map(q => normalizeTextForMatching(q)); // ✅ 텍스트 정규화 적용
         
         if (searchQueries.length > 0) {
           const isMultiSearch = searchQueries.length > 1;
           
           if (isMultiSearch) {
-            // ✅ 복수 검색어: 각 검색어를 모두 하이라이트
+            // ✅ 복수 검색어: 각 검색어를 모두 하이라이트 (정규화된 텍스트로 매칭)
             textSpans.forEach((span) => {
-              const text = (span.textContent || '').toLowerCase();
+              const text = normalizeTextForMatching(span.textContent || '');
               if (!text.trim()) return;
               
               // 모든 검색어 중 하나라도 포함되면 하이라이트
@@ -557,15 +568,18 @@
               return; // 검색 텍스트로 하이라이트했으면 키워드 하이라이트는 스킵
             }
           } else {
-            // 단일 검색어: 기존 로직 (더 정확한 매칭)
+            // 단일 검색어: 정규화된 텍스트로 매칭
             const trimmedSearchText = searchText.trim();
             // 검색어가 긴 경우(20자 이상) 핵심 부분만 사용, 짧은 경우 전체 사용
             const coreText = trimmedSearchText.length >= 20 
               ? trimmedSearchText.substring(0, 25).trim()
               : trimmedSearchText;
             
-            if (coreText.length >= 3) {
-              // 연속된 span들을 합쳐서 텍스트 생성
+            // ✅ 검색어 정규화
+            const normalizedCoreText = normalizeTextForMatching(coreText);
+            
+            if (normalizedCoreText.length >= 3) {
+              // 연속된 span들을 합쳐서 텍스트 생성 (정규화된 텍스트로)
               let accumulatedText = '';
               let accumulatedSpans = [];
               let foundMatch = false;
@@ -576,8 +590,9 @@
                   accumulatedText += text;
                   accumulatedSpans.push(span);
                   
-                  // 누적된 텍스트가 검색 텍스트를 포함하면 하이라이트
-                  if (accumulatedText.toLowerCase().includes(coreText.toLowerCase())) {
+                  // ✅ 정규화된 텍스트로 매칭 (공백, 특수문자 차이 무시)
+                  const normalizedAccumulated = normalizeTextForMatching(accumulatedText);
+                  if (normalizedAccumulated.includes(normalizedCoreText)) {
                     foundMatch = true;
                     // 검색어 길이의 2배 이내일 때만 하이라이트 (과도한 하이라이트 방지)
                     const maxLength = coreText.length * 2.5;
@@ -587,10 +602,10 @@
                         highlightCount++;
                       });
                     } else {
-                      // 너무 길면 검색어가 포함된 부분만 하이라이트
+                      // 너무 길면 검색어가 포함된 부분만 하이라이트 (정규화된 텍스트로)
                       accumulatedSpans.forEach(s => {
-                        const spanText = s.textContent || '';
-                        if (spanText.toLowerCase().includes(coreText.toLowerCase())) {
+                        const spanText = normalizeTextForMatching(s.textContent || '');
+                        if (spanText.includes(normalizedCoreText)) {
                           s.classList.add('highlight-strong');
                           highlightCount++;
                         }
@@ -608,11 +623,11 @@
                 }
               });
               
-              // 검색어가 각 span에 직접 포함되어 있는 경우도 하이라이트
+              // 검색어가 각 span에 직접 포함되어 있는 경우도 하이라이트 (정규화된 텍스트로)
               if (!foundMatch || highlightCount === 0) {
                 textSpans.forEach((span) => {
-                  const text = (span.textContent || '').toLowerCase();
-                  if (text.includes(coreText.toLowerCase())) {
+                  const text = normalizeTextForMatching(span.textContent || '');
+                  if (text.includes(normalizedCoreText)) {
                     span.classList.add('highlight-strong');
                     highlightCount++;
                   }
@@ -620,7 +635,7 @@
               }
               
               if (highlightCount > 0) {
-                console.log(`✅ 검색 텍스트 하이라이트 적용 완료: ${highlightCount}개 요소`);
+                console.log(`✅ 검색 텍스트 하이라이트 적용 완료: ${highlightCount}개 요소 (정규화된 텍스트 매칭)`);
                 return; // 검색 텍스트로 하이라이트했으면 키워드 하이라이트는 스킵
               }
             }

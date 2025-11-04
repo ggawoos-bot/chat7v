@@ -923,38 +923,89 @@ Here is the source material:
         return chunkRef;
       }
       
-      // 2. 참조 번호 주변의 문맥 추출 (앞 200자 ~ 뒤 200자)
-      const contextStart = Math.max(0, matchIndex - 200);
-      const contextEnd = Math.min(responseText.length, matchIndex + matchText.length + 200);
+      // ✅ 개선: 2. 참조 번호 주변의 문맥 추출 범위 확대 (앞 400자 ~ 뒤 400자)
+      const contextStart = Math.max(0, matchIndex - 400);
+      const contextEnd = Math.min(responseText.length, matchIndex + matchText.length + 400);
       const context = responseText.substring(contextStart, contextEnd);
       
+      // ✅ 개선: 여러 참조 번호 위치 모두 찾기 (가장 관련성 높은 위치 선택)
+      let bestMatchIndex = matchIndex;
+      let bestMatchText = matchText;
+      
+      if (boldMatch && boldMatch.length > 1) {
+        // 여러 매칭이 있으면 각 위치를 확인하여 가장 관련성 높은 위치 선택
+        // 참조 번호가 문장 끝에 있는 경우 (공백 후 참조 번호)가 더 관련성 높음
+        let bestScore = 0;
+        
+        // 모든 매칭 위치 확인 (matchAll 사용으로 모든 위치 찾기)
+        const allMatches = [...responseText.matchAll(boldPattern)];
+        for (const match of allMatches) {
+          const idx = match.index;
+          if (idx === undefined) continue;
+          
+          const beforeChar = idx > 0 ? responseText[idx - 1] : ' ';
+          const afterChar = idx + match[0].length < responseText.length 
+            ? responseText[idx + match[0].length] : ' ';
+          
+          // 관련성 점수 계산
+          let score = 0;
+          // 참조 번호 앞이 공백이고 뒤가 문장 끝이거나 공백인 경우가 더 관련성 높음
+          if (beforeChar === ' ' && (afterChar === ' ' || afterChar === '.' || afterChar === '。')) {
+            score = 2; // 가장 관련성 높음
+          } else if (beforeChar === ' ' || afterChar === ' ' || afterChar === '.' || afterChar === '。') {
+            score = 1; // 중간 관련성
+          }
+          
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatchIndex = idx;
+            bestMatchText = match[0];
+          }
+        }
+      }
+      
       // 3. 문장 분할 (개선된 경계 인식)
-      const sentences = context
+      const contextForBestMatch = responseText.substring(
+        Math.max(0, bestMatchIndex - 400),
+        Math.min(responseText.length, bestMatchIndex + bestMatchText.length + 400)
+      );
+      const sentences = contextForBestMatch
         .split(/[.。!！?？\n]/)
         .map(s => s.trim())
         .filter(s => s.length >= 10);
       
       // 4. 참조 번호가 포함된 문장 또는 그 주변 문장 찾기
-      const refIndex = sentences.findIndex(s => s.includes(matchText));
+      const refIndex = sentences.findIndex(s => s.includes(bestMatchText));
       
       if (refIndex < 0) {
         console.log(`⚠️ 참조 번호 ${refNumber} 주변 문장을 찾지 못함`);
         return chunkRef;
       }
       
-      // 참조 번호가 포함된 문장 또는 그 앞 문장 선택
+      // ✅ 개선: 참조 번호가 포함된 문장 또는 그 앞/뒤 문장 선택
       let targetSentence = '';
-      if (refIndex > 0 && sentences[refIndex].includes(matchText)) {
+      if (refIndex > 0 && sentences[refIndex].includes(bestMatchText)) {
         // 참조 번호 앞 문장이 더 의미 있을 수 있음
         targetSentence = sentences[refIndex - 1] || sentences[refIndex];
+      } else if (refIndex < sentences.length - 1) {
+        // ✅ 추가: 참조 번호 뒤 문장도 확인 (참조 번호가 문장 앞에 있을 때)
+        const nextSentence = sentences[refIndex + 1];
+        if (nextSentence && nextSentence.length >= 15) {
+          targetSentence = nextSentence;
+        } else {
+          targetSentence = sentences[refIndex];
+        }
       } else {
         targetSentence = sentences[refIndex];
       }
       
-      // 5. 참조 번호 제거 및 정리
+      // 5. ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
         .replace(/\*\*\d+\*\*/g, '') // **2** 제거
         .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
+        .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
+        .replace(/\*\*/g, '') // ✅ 남은 ** 제거
+        .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
         .trim();
       
       if (cleaned.length < 15) {
