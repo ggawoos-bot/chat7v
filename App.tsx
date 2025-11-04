@@ -439,66 +439,29 @@ function App() {
   
   // ✅ 하이브리드 텍스트 추출 함수들
   const getCircleNumber = (num: number): string => {
-    // ✅ 개선: 원숫자 범위 확장 (①~㉟까지 지원, 35개)
-    const circleNumbers = [
-      '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
-      '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
-      '㉑', '㉒', '㉓', '㉔', '㉕', '㉖', '㉗', '㉘', '㉙', '㉚',
-      '㉛', '㉜', '㉝', '㉞', '㉟'
-    ];
+    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
     return circleNumbers[num - 1] || '';
   };
 
-  // AI 응답에서 참조 번호 주변 문장 추출 (개선 버전)
+  // AI 응답에서 참조 번호 주변 문장 추출
   const extractSentenceFromResponse = (responseText: string, referenceNumber: number): string | null => {
     if (!responseText || referenceNumber <= 0) return null;
     
-    // 참조 번호 패턴 찾기 (예: **18**, ⑱ 등) - 여러 패턴 시도
+    // 참조 번호 패턴 찾기 (예: **2**, ② 등)
     const boldPattern = new RegExp(`\\*\\*${referenceNumber}\\*\\*`, 'g');
     const circlePattern = getCircleNumber(referenceNumber);
     
     let matchIndex = -1;
     let matchText = '';
     
-    // **18** 형식 찾기 (모든 매칭을 찾아서 가장 관련성 높은 것 선택)
+    // **2** 형식 찾기 (모든 매칭을 찾아서 가장 관련성 높은 것 선택)
     const boldMatches = responseText.match(boldPattern);
     if (boldMatches && boldMatches.length > 0) {
-      // 여러 매칭이 있으면 가장 관련성 높은 위치 선택
-      let bestIndex = -1;
-      let bestScore = 0;
-      
-      for (const match of boldMatches) {
-        const idx = responseText.indexOf(match, bestIndex === -1 ? 0 : bestIndex + 1);
-        if (idx === -1) continue;
-        
-        const beforeChar = idx > 0 ? responseText[idx - 1] : ' ';
-        const afterChar = idx + match.length < responseText.length 
-          ? responseText[idx + match.length] : ' ';
-        
-        let score = 0;
-        // 참조 번호 앞이 공백이고 뒤가 문장 끝이거나 공백인 경우가 더 관련성 높음
-        if (beforeChar === ' ' && (afterChar === ' ' || afterChar === '.' || afterChar === '。')) {
-          score = 2;
-        } else if (beforeChar === ' ' || afterChar === ' ' || afterChar === '.' || afterChar === '。') {
-          score = 1;
-        }
-        
-        if (score > bestScore) {
-          bestScore = score;
-          bestIndex = idx;
-          matchText = match;
-        }
-      }
-      
-      if (bestIndex >= 0) {
-        matchIndex = bestIndex;
-      } else {
-        // 점수가 동일하거나 모두 0이면 첫 번째 매칭 사용
-        matchIndex = responseText.indexOf(boldMatches[0]);
-        matchText = boldMatches[0];
-      }
+      // 여러 매칭이 있으면 가장 의미 있는 위치 선택 (첫 번째 또는 문장 시작 근처)
+      matchIndex = responseText.indexOf(boldMatches[0]);
+      matchText = boldMatches[0];
     } else if (circlePattern) {
-      // ⑱ 형식 찾기
+      // ② 형식 찾기
       const circleIndex = responseText.indexOf(circlePattern);
       if (circleIndex >= 0) {
         matchIndex = circleIndex;
@@ -506,22 +469,15 @@ function App() {
       }
     }
     
-    if (matchIndex < 0) {
-      console.warn(`⚠️ 참조 번호 ${referenceNumber}를 AI 응답에서 찾지 못함`);
-      return null;
-    }
+    if (matchIndex < 0) return null;
     
-    // ✅ 개선: 참조 번호 주변의 문맥 추출 범위 확대 (앞 500자 ~ 뒤 500자)
-    const start = Math.max(0, matchIndex - 500);
-    const end = Math.min(responseText.length, matchIndex + matchText.length + 500);
+    // ✅ 개선: 참조 번호 주변의 문맥 추출 범위 확대 (앞 300자 ~ 뒤 300자)
+    const start = Math.max(0, matchIndex - 300);
+    const end = Math.min(responseText.length, matchIndex + matchText.length + 300);
     const context = responseText.substring(start, end);
     
-    // 문장 경계에서 자르기 (개선된 패턴)
-    const sentences = context
-      .split(/[.。!！?？\n]/)
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
-    
+    // 문장 경계에서 자르기
+    const sentences = context.split(/[.。!！?？\n]/).map(s => s.trim()).filter(s => s.length > 0);
     const refIndex = sentences.findIndex(s => s.includes(matchText));
     
     if (refIndex >= 0) {
@@ -531,12 +487,7 @@ function App() {
       // ✅ 개선: 참조 번호가 포함된 문장 찾기 로직 개선
       if (refIndex > 0 && sentences[refIndex].includes(matchText)) {
         // 참조 번호 앞 문장이 더 의미 있을 수 있음 (일반적으로 참조 번호는 문장 뒤에 위치)
-        const prevSentence = sentences[refIndex - 1];
-        if (prevSentence && prevSentence.length >= 15) {
-          targetSentence = prevSentence;
-        } else {
-          targetSentence = sentences[refIndex];
-        }
+        targetSentence = sentences[refIndex - 1] || sentences[refIndex];
       } else if (refIndex < sentences.length - 1) {
         // 참조 번호 뒤 문장도 확인
         const nextSentence = sentences[refIndex + 1];
@@ -551,20 +502,16 @@ function App() {
       
       // ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
-        .replace(/\*\*\d+\*\*/g, '') // **18** 제거
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚㉛㉜㉝㉞㉟]/g, '') // 원형 숫자 제거 (35개 확장)
+        .replace(/\*\*\d+\*\*/g, '') // **2** 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
         .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
         .replace(/\*\*/g, '') // ✅ 남은 ** 제거
         .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
         .trim();
       
       if (cleaned.length >= 15) {
-        return cleaned.substring(0, 300); // ✅ 최대 300자로 확장 (제안의 50%)
-      } else {
-        console.warn(`⚠️ 추출된 문장이 너무 짧음: ${cleaned}`);
+        return cleaned.substring(0, 60); // 최대 60자
       }
-    } else {
-      console.warn(`⚠️ 참조 번호 ${referenceNumber} 주변 문장을 찾지 못함`);
     }
     
     return null;
@@ -620,7 +567,7 @@ function App() {
     // 1순위: referencedSentence 사용 (AI가 실제로 인용한 문장)
     if (referencedSentence && referencedSentence.length >= 15) {
       console.log('✅ [1순위] referencedSentence 사용:', referencedSentence.substring(0, 60));
-      return referencedSentence.substring(0, 105); // ✅ 최대 105자로 확장 (제안의 50%)
+      return referencedSentence.substring(0, 60); // 최대 60자
     } else if (referencedSentence) {
       console.log('⚠️ referencedSentence가 너무 짧음:', referencedSentence.substring(0, 30));
     } else {
@@ -655,94 +602,17 @@ function App() {
     return fallback;
   };
 
-  // ✅ 방안 2: referencedSentenceIndex 기반 정확한 문장 추출 함수
-  const extractSentenceByIndex = (chunkContent: string, sentenceIndex: number): string | null => {
-    if (!chunkContent || sentenceIndex === undefined || sentenceIndex < 0) {
-      return null;
-    }
-    
-    // 문장 분리 (개선된 문장 분리 로직)
-    const sentences = chunkContent
-      .split(/[.。!！?？\n]/)
-      .map(s => s.trim())
-      .filter(s => s.length >= 10); // 최소 10자 이상
-    
-    if (sentenceIndex >= 0 && sentenceIndex < sentences.length) {
-      const targetSentence = sentences[sentenceIndex].trim();
-      if (targetSentence.length >= 15) {
-        console.log(`✅ [방안 2] referencedSentenceIndex(${sentenceIndex})로 문장 추출:`, targetSentence.substring(0, 60));
-        return targetSentence;
-      }
-    }
-    
-    console.warn(`⚠️ [방안 2] referencedSentenceIndex(${sentenceIndex})로 문장 추출 실패 (문장 개수: ${sentences.length})`);
-    return null;
-  };
-
   // ✅ 참조 클릭 이벤트 리스너 - 새 창에서 PDF 열기 또는 기존 창 페이지 이동
   useEffect(() => {
     const handleReferenceClick = async (event: CustomEvent) => {
       console.log('📥 App.tsx에서 referenceClick 이벤트 수신:', event.detail);
-      const { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, responseText, referenceNumber, referencedSentence, referencedSentenceIndex } = event.detail;
+      const { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, responseText, referenceNumber, referencedSentence } = event.detail;
       console.log('📝 설정할 값:', { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, referencedSentence });
       
       // ✅ 개선: 참조 문장이 있으면 PDF에서 정확한 페이지 검색
       let actualPage = page || logicalPageNumber || 1;
       
-      // ✅ 방안 2: referencedSentenceIndex 기반 정확한 문장 추출 (최우선)
-      let searchSentence: string | null = null;
-      let searchSource = 'unknown';
-      
-      if (referencedSentenceIndex !== undefined && referencedSentenceIndex !== null && chunkContent) {
-        const indexedSentence = extractSentenceByIndex(chunkContent, referencedSentenceIndex);
-        if (indexedSentence && indexedSentence.length >= 15) {
-          searchSentence = indexedSentence;
-          searchSource = 'referencedSentenceIndex';
-          console.log('✅ [방안 2 우선] referencedSentenceIndex로 정확한 문장 추출 성공');
-        }
-      }
-      
-      // 1순위: referencedSentence (AI가 실제로 인용한 문장)
-      if (!searchSentence && referencedSentence && referencedSentence.length >= 15) {
-        searchSentence = referencedSentence;
-        searchSource = 'referencedSentence';
-        console.log('✅ [1순위] referencedSentence 사용');
-      }
-      
-      // 2순위: extractSearchText (AI 응답에서 추출 또는 청크에서 추출)
-      if (!searchSentence || searchSentence.length < 15) {
-        const coreSearchText = extractSearchText(chunkContent, responseText, referenceNumber || 0, referencedSentence);
-        if (coreSearchText && coreSearchText.length >= 15) {
-          searchSentence = coreSearchText;
-          searchSource = 'extractSearchText';
-          console.log('✅ [2순위] extractSearchText 사용');
-        }
-      }
-      
-      // 3순위: AI 응답에서 직접 추출 시도
-      if (!searchSentence || searchSentence.length < 15) {
-        if (responseText && referenceNumber > 0) {
-          const sentenceFromResponse = extractSentenceFromResponse(responseText, referenceNumber);
-          if (sentenceFromResponse && sentenceFromResponse.length >= 15) {
-            searchSentence = sentenceFromResponse;
-            searchSource = 'AI 응답 직접 추출';
-            console.log('✅ [3순위] AI 응답에서 문장 추출:', sentenceFromResponse.substring(0, 60));
-          }
-        }
-      }
-      
-      // 4순위: chunkContent에서 핵심 문장 추출 (주의: 잘못된 페이지일 수 있음)
-      if ((!searchSentence || searchSentence.length < 15) && chunkContent) {
-        const bestSentence = extractBestSentence(chunkContent);
-        if (bestSentence && bestSentence.length >= 15) {
-          searchSentence = bestSentence;
-          searchSource = '청크 핵심 문장';
-          console.log('⚠️ [4순위] 청크에서 추출 (주의: 잘못된 페이지일 수 있음):', bestSentence.substring(0, 60));
-        }
-      }
-      
-      // ✅ 개선: searchSentence가 있으면 무조건 검색 실행 (referencedSentence 여부와 무관)
-      if (filename && searchSentence && searchSentence.length >= 15) {
+      if (filename && referencedSentence && referencedSentence.length >= 15) {
         try {
           const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
           const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
@@ -750,32 +620,22 @@ function App() {
           const pdfUrl = `${window.location.origin}${basePath}/${encodedFilename}`;
           
           console.log('🔍 정확한 페이지 검색 시작:', {
-            searchSentence: searchSentence.substring(0, 50),
-            fallbackPage: actualPage,
-            hasReferencedSentence: !!referencedSentence,
-            hasReferencedSentenceIndex: referencedSentenceIndex !== undefined && referencedSentenceIndex !== null,
-            source: searchSource
+            referencedSentence: referencedSentence.substring(0, 50),
+            fallbackPage: actualPage
           });
           
           // PDF에서 정확한 페이지 검색
-          actualPage = await findExactPageInPDF(pdfUrl, searchSentence, actualPage);
+          actualPage = await findExactPageInPDF(pdfUrl, referencedSentence, actualPage);
           
           console.log('✅ 페이지 검색 완료:', {
             originalPage: page,
             actualPage: actualPage,
-            changed: actualPage !== page,
-            searchSentence: searchSentence.substring(0, 50)
+            changed: actualPage !== page
           });
         } catch (error) {
           console.warn('⚠️ 페이지 검색 실패, 기본 페이지 사용:', error);
           // 오류 시 원래 페이지 사용
         }
-      } else {
-        console.warn('⚠️ 페이지 검색 조건 불충족:', {
-          hasFilename: !!filename,
-          hasSearchSentence: !!searchSentence,
-          searchSentenceLength: searchSentence?.length || 0
-        });
       }
       
       // PDF 파일명과 페이지 정보가 있으면 새 창에서 PDF 열기
@@ -792,9 +652,8 @@ function App() {
           // 하이라이트할 키워드 추출 (개선: 정확하고 적은 키워드만 선택)
           const highlightKeywords: string[] = [];
           
-          // ✅ 하이브리드 텍스트 추출 (이미 위에서 계산됨, 재사용)
-          // searchSentence가 이미 위에서 추출되었고, 더 정확한 문장을 담고 있음
-          const coreSearchText = searchSentence || (chunkContent ? chunkContent.substring(0, 30) : undefined);
+          // ✅ 하이브리드 텍스트 추출 (우선순위: referencedSentence > AI 응답 > chunkContent)
+          const coreSearchText = extractSearchText(chunkContent, responseText, referenceNumber || 0, referencedSentence);
           
           // ✅ 개선: 키워드는 최대 3개만 (가장 관련성 높은 것만)
           // 1. 청크 키워드에서 최대 2개 (가장 관련성 높은 것, 20자 이하만)

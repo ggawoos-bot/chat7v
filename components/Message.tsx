@@ -45,13 +45,7 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
     if (!responseText || referenceNumber <= 0) return null;
     
     const boldPattern = new RegExp(`\\*\\*${referenceNumber}\\*\\*`, 'g');
-    // ✅ 개선: 원숫자 범위 확장 (①~㉟까지 지원, 35개)
-    const circleNumbers = [
-      '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
-      '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
-      '㉑', '㉒', '㉓', '㉔', '㉕', '㉖', '㉗', '㉘', '㉙', '㉚',
-      '㉛', '㉜', '㉝', '㉞', '㉟'
-    ];
+    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
     const circlePattern = circleNumbers[referenceNumber - 1] || '';
     
     let matchIndex = -1;
@@ -97,10 +91,10 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
         targetSentence = sentences[refIndex];
       }
       
-      // ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거 (원숫자 범위 확장)
+      // ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
-        .replace(/\*\*\d+\*\*/g, '') // **18** 제거
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚㉛㉜㉝㉞㉟]/g, '') // 원형 숫자 제거 (35개 확장)
+        .replace(/\*\*\d+\*\*/g, '') // **2** 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
         .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
         .replace(/\*\*/g, '') // ✅ 남은 ** 제거
         .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
@@ -395,8 +389,7 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
             keywords: chunk.keywords || [], // ✅ 청크 키워드 (하이라이트용)
             responseText: message.content, // ✅ AI 응답 텍스트 추가 (하이라이트용)
             referenceNumber, // ✅ 참조 번호 추가 (하이라이트용)
-            referencedSentence: chunk.referencedSentence, // ✅ AI가 실제로 인용한 문장 추가
-            referencedSentenceIndex: chunk.referencedSentenceIndex // ✅ 방안 2: 문장 인덱스 추가
+            referencedSentence: chunk.referencedSentence // ✅ AI가 실제로 인용한 문장 추가
           }
         }));
       }
