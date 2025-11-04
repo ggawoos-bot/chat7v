@@ -888,7 +888,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                         : `${window.location.origin}${pdfUrl}`;
                       
                       // 새 창에서 PDF 뷰어 열기
-                      const viewerUrl = `/pdf-viewer.html?url=${encodeURIComponent(absolutePdfUrl)}&page=${pdfCurrentPage}&title=${encodeURIComponent(documentTitle || 'PDF 문서')}`;
+                      const viewerUrl = `/chat7v/pdf-viewer.html?url=${encodeURIComponent(absolutePdfUrl)}&page=${pdfCurrentPage}&title=${encodeURIComponent(documentTitle || 'PDF 문서')}`;
                       
                       console.log('📄 PDF 뷰어 새 창 열기:', viewerUrl);
                       console.log('📄 PDF 파일 URL:', absolutePdfUrl);

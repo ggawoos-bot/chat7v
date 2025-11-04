@@ -371,7 +371,7 @@ function App() {
             params.append('searchText', contentSnippet);
           }
           
-          const viewerUrl = `/pdf-viewer.html?${params.toString()}`;
+          const viewerUrl = `/chat7v/pdf-viewer.html?${params.toString()}`;
           
           console.log('📄 PDF 뷰어 URL:', viewerUrl);
           console.log('📄 PDF 파일 URL:', absolutePdfUrl);
