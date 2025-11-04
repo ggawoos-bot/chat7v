@@ -79,7 +79,7 @@
           try {
             setIsLoading(true);
             // GitHub API를 통해 PDF 파일 목록 조회
-            const response = await fetch('https://api.github.com/repos/ggawoos-bot/chat6v/contents/public/pdf/manifest.json');
+            const response = await fetch('https://api.github.com/repos/ggawoos-bot/chat7v/contents/public/pdf/manifest.json');
             if (response.ok) {
               const data = await response.json();
               const manifest = JSON.parse(atob(data.content));
@@ -124,7 +124,7 @@
                 <div class="space-y-3">
                   <div class="flex items-center gap-3">
                     <span class="bg-green-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold">1</span>
-                    <a href="https://github.com/ggawoos-bot/chat6v/actions/workflows/auto-process-pdfs.yml" 
+                    <a href="https://github.com/ggawoos-bot/chat7v/actions/workflows/auto-process-pdfs.yml" 
                        target="_blank"
                        class="text-green-300 hover:text-green-200 underline">
                       GitHub Actions 페이지로 이동
@@ -171,7 +171,7 @@
                     <p className="text-brand-text-secondary">PDF 파일 관리 및 processed-pdfs.json 생성</p>
                   </div>
                   <a
-                    href="/chat6v/"
+                    href="/chat7v/"
                     className="px-4 py-2 bg-brand-secondary text-brand-text-primary rounded-lg hover:bg-opacity-80 transition-colors"
                   >
                     메인으로 돌아가기 
@@ -193,7 +193,7 @@
                   GitHub Web Interface를 통해 PDF 파일을 안전하게 업로드/삭제하세요.
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <a href="https://github.com/ggawoos-bot/chat6v/tree/main/public/pdf" 
+                  <a href="https://github.com/ggawoos-bot/chat7v/tree/main/public/pdf" 
                      target="_blank"
                      className="flex items-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -202,7 +202,7 @@
                     </svg>
                     PDF 폴더 열기
                   </a>
-                  <a href="https://github.com/ggawoos-bot/chat6v/upload/main/public/pdf" 
+                  <a href="https://github.com/ggawoos-bot/chat7v/upload/main/public/pdf" 
                      target="_blank"
                      className="flex items-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

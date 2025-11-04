@@ -180,7 +180,7 @@ const pdfUrl = useMemo(() => {
   const filename = pdfFilename || document?.filename || '';
   if (!filename) return '';
   const encodedFilename = encodeURIComponent(filename);
-  return `/chat6v/pdf/${encodedFilename}`;
+  return `/chat7v/pdf/${encodedFilename}`;
 }, [pdfFilename, document?.filename]);
 ```
 

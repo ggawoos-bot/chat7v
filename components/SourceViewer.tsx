@@ -106,7 +106,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     const encodedFilename = encodeURIComponent(filename);
     // 개발 환경과 프로덕션 환경 모두 지원
     const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const basePath = isDevelopment ? '/pdf' : '/chat6v/pdf';
+    const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
     return `${basePath}/${encodedFilename}`;
   }, [pdfFilename, document?.filename]);
   
