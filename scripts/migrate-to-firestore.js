@@ -602,9 +602,9 @@ async function saveChunkToFirestore(documentId, filename, chunk, index, position
     const chunkStartPos = position;
     const chunkEndPos = position + chunk.length;
     
-    // ✅ 정확한 페이지 정보 계산 (뷰어 인덱스와 논리적 페이지 번호)
+    // ✅ 정확한 페이지 정보 계산 (하이브리드 방식: 위치 + 텍스트 매칭)
     const pageInfo = pagesData.length > 0
-      ? getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData)
+      ? getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData, chunk)
       : { pageIndex: 1, logicalPageNumber: 1 };
     
     const chunkData = {
@@ -635,84 +635,138 @@ async function saveChunkToFirestore(documentId, filename, chunk, index, position
   }
 }
 
-// ✅ 정확한 페이지 번호 계산 함수 (페이지별 데이터 사용) - 뷰어 인덱스와 논리적 페이지 번호 모두 반환
-// 개선: 청크의 시작 위치를 우선적으로 사용하여 오버랩으로 인한 페이지 오매핑 방지
-function getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData) {
+// ✅ 텍스트 정규화 함수 (매칭용)
+function normalizeTextForMatching(text) {
+  if (!text) return '';
+  return text
+    .replace(/\s+/g, ' ')           // 연속 공백을 하나로
+    .replace(/[\n\r\t]/g, ' ')      // 줄바꿈/탭을 공백으로
+    .replace(/[^\w가-힣\s:;]/g, '') // 특수문자 제거 (콜론, 세미콜론은 유지)
+    .toLowerCase()
+    .trim();
+}
+
+// ✅ 하이브리드 페이지 번호 계산 함수 (위치 기반 + 텍스트 매칭)
+// 위치 기반으로 후보를 필터링하고, 텍스트 매칭으로 가장 정확한 페이지 선택
+function getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData, chunkContent = null) {
   if (!pagesData || pagesData.length === 0) {
     return { pageIndex: 1, logicalPageNumber: 1 };
   }
   
-  // 1단계: 청크의 시작 위치가 속한 페이지를 우선 찾기 (가장 정확함)
+  // ✅ 1단계: 위치 기반으로 후보 페이지 찾기 (빠른 필터링)
+  const candidatePages = [];
   for (let i = 0; i < pagesData.length; i++) {
     const page = pagesData[i];
-    if (chunkStartPos >= page.startPosition && chunkStartPos <= page.endPosition) {
-      return {
-        pageIndex: page.pageNumber, // 뷰어 인덱스 (1-based)
-        logicalPageNumber: page.logicalPageNumber || page.pageNumber // 논리적 페이지 번호
-      };
-    }
-  }
-  
-  // 2단계: 시작 위치로 찾지 못한 경우, 청크의 끝 위치가 속한 페이지 찾기
-  for (let i = 0; i < pagesData.length; i++) {
-    const page = pagesData[i];
-    if (chunkEndPos >= page.startPosition && chunkEndPos <= page.endPosition) {
-      return {
-        pageIndex: page.pageNumber, // 뷰어 인덱스 (1-based)
-        logicalPageNumber: page.logicalPageNumber || page.pageNumber // 논리적 페이지 번호
-      };
-    }
-  }
-  
-  // 3단계: 시작/끝 위치로도 찾지 못한 경우, 오버랩 비율로 판단
-  // 여러 페이지에 걸쳐 있을 때 가장 많은 내용이 있는 페이지 선택
-  let bestPage = null;
-  let maxOverlapRatio = 0;
-  const chunkLength = chunkEndPos - chunkStartPos;
-  
-  for (let i = 0; i < pagesData.length; i++) {
-    const page = pagesData[i];
-    
-    // 청크가 페이지 경계에 걸쳐있는 경우
+    // 청크가 페이지와 겹치는지 확인 (<= 대신 < 사용으로 경계 처리 개선)
     if (chunkStartPos < page.endPosition && chunkEndPos > page.startPosition) {
-      const overlapStart = Math.max(chunkStartPos, page.startPosition);
-      const overlapEnd = Math.min(chunkEndPos, page.endPosition);
-      const overlap = overlapEnd - overlapStart;
-      const overlapRatio = overlap / chunkLength;
-      
-      // 가장 큰 오버랩 비율을 가진 페이지 선택
-      if (overlapRatio > maxOverlapRatio) {
-        maxOverlapRatio = overlapRatio;
-        bestPage = page;
-      }
+      candidatePages.push(page);
     }
   }
   
-  // 오버랩이 30% 이상인 페이지가 있으면 그 페이지 반환
-  if (bestPage && maxOverlapRatio >= 0.3) {
+  if (candidatePages.length === 0) {
+    // 후보가 없으면 기존 로직으로 폴백
+    const lastPage = pagesData[pagesData.length - 1];
     return {
-      pageIndex: bestPage.pageNumber, // 뷰어 인덱스 (1-based)
-      logicalPageNumber: bestPage.logicalPageNumber || bestPage.pageNumber // 논리적 페이지 번호
+      pageIndex: lastPage?.pageNumber || 1,
+      logicalPageNumber: lastPage?.logicalPageNumber || lastPage?.pageNumber || 1
     };
   }
   
-  // 4단계: 폴백 - 청크의 중심점이 속한 페이지 찾기
-  const chunkCenter = (chunkStartPos + chunkEndPos) / 2;
-  for (let i = 0; i < pagesData.length; i++) {
-    const page = pagesData[i];
-    if (chunkCenter >= page.startPosition && chunkCenter <= page.endPosition) {
+  // ✅ 2단계: 텍스트 매칭으로 가장 정확한 페이지 선택 (하이브리드 방식)
+  if (chunkContent && chunkContent.length >= 15) {
+    const normalizedChunk = normalizeTextForMatching(chunkContent);
+    let bestPage = candidatePages[0];
+    let bestScore = 0;
+    
+    for (const page of candidatePages) {
+      const normalizedPageText = normalizeTextForMatching(page.text);
+      let score = 0;
+      
+      // 텍스트 매칭 점수 계산
+      // 전체 포함 여부 (가장 높은 점수)
+      if (normalizedPageText.includes(normalizedChunk)) {
+        score += 100; // 완전 매칭
+      } else {
+        // 부분 매칭 (최소 50자 이상)
+        const minMatchLength = 50;
+        if (normalizedChunk.length >= minMatchLength) {
+          const chunkKeyPart = normalizedChunk.substring(0, Math.min(100, normalizedChunk.length));
+          if (normalizedPageText.includes(chunkKeyPart)) {
+            score += 50; // 부분 매칭
+          }
+        }
+      }
+      
+      // 오버랩 비율 추가 점수 (위치 기반)
+      const overlapStart = Math.max(chunkStartPos, page.startPosition);
+      const overlapEnd = Math.min(chunkEndPos, page.endPosition);
+      const overlap = Math.max(0, overlapEnd - overlapStart);
+      const chunkLength = chunkEndPos - chunkStartPos;
+      const overlapRatio = chunkLength > 0 ? overlap / chunkLength : 0;
+      score += overlapRatio * 30; // 오버랩 비율 점수 (최대 30점)
+      
+      // 시작 위치가 페이지에 포함되는지 (추가 점수)
+      if (chunkStartPos >= page.startPosition && chunkStartPos < page.endPosition) {
+        score += 10; // 시작 위치 보너스
+      }
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestPage = page;
+      }
+    }
+    
+    // 텍스트 매칭으로 충분한 점수를 얻었으면 반환
+    if (bestScore >= 50) {
       return {
-        pageIndex: page.pageNumber, // 뷰어 인덱스 (1-based)
-        logicalPageNumber: page.logicalPageNumber || page.pageNumber // 논리적 페이지 번호
+        pageIndex: bestPage.pageNumber,
+        logicalPageNumber: bestPage.logicalPageNumber || bestPage.pageNumber
       };
     }
   }
   
-  // 최종 폴백: 마지막 페이지
-  const lastPage = pagesData[pagesData.length - 1];
+  // ✅ 3단계: 텍스트 매칭 실패 또는 chunkContent가 없는 경우, 위치 기반으로 선택
+  // 청크의 시작 위치가 속한 페이지를 우선 찾기
+  for (const page of candidatePages) {
+    if (chunkStartPos >= page.startPosition && chunkStartPos < page.endPosition) {
+      return {
+        pageIndex: page.pageNumber,
+        logicalPageNumber: page.logicalPageNumber || page.pageNumber
+      };
+    }
+  }
+  
+  // 시작 위치로 찾지 못한 경우, 끝 위치 기준
+  for (const page of candidatePages) {
+    if (chunkEndPos > page.startPosition && chunkEndPos <= page.endPosition) {
+      return {
+        pageIndex: page.pageNumber,
+        logicalPageNumber: page.logicalPageNumber || page.pageNumber
+      };
+    }
+  }
+  
+  // 오버랩 비율로 판단
+  let bestPage = candidatePages[0];
+  let maxOverlapRatio = 0;
+  const chunkLength = chunkEndPos - chunkStartPos;
+  
+  for (const page of candidatePages) {
+    const overlapStart = Math.max(chunkStartPos, page.startPosition);
+    const overlapEnd = Math.min(chunkEndPos, page.endPosition);
+    const overlap = Math.max(0, overlapEnd - overlapStart);
+    const overlapRatio = chunkLength > 0 ? overlap / chunkLength : 0;
+    
+    if (overlapRatio > maxOverlapRatio) {
+      maxOverlapRatio = overlapRatio;
+      bestPage = page;
+    }
+  }
+  
+  // 최종 폴백
   return {
-    pageIndex: lastPage?.pageNumber || 1,
-    logicalPageNumber: lastPage?.logicalPageNumber || lastPage?.pageNumber || 1
+    pageIndex: bestPage.pageNumber,
+    logicalPageNumber: bestPage.logicalPageNumber || bestPage.pageNumber
   };
 }
 
@@ -779,9 +833,9 @@ async function processChunksStreaming(documentId, filename, text, pagesData = []
     const chunkStartPos = position;
     const chunkEndPos = position + chunk.length;
     
-    // ✅ 정확한 페이지 정보 계산 (뷰어 인덱스와 논리적 페이지 번호)
+    // ✅ 정확한 페이지 정보 계산 (하이브리드 방식: 위치 + 텍스트 매칭)
     const pageInfo = pagesData.length > 0
-      ? getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData)
+      ? getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData, chunk.trim())
       : { pageIndex: 1, logicalPageNumber: 1 };
     
     chunkDataList.push({
