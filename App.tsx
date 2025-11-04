@@ -793,7 +793,8 @@ function App() {
           const highlightKeywords: string[] = [];
           
           // ✅ 하이브리드 텍스트 추출 (이미 위에서 계산됨, 재사용)
-          // const coreSearchText는 이미 위에서 계산되어 searchSentence에 포함됨
+          // searchSentence가 이미 위에서 추출되었고, 더 정확한 문장을 담고 있음
+          const coreSearchText = searchSentence || (chunkContent ? chunkContent.substring(0, 30) : undefined);
           
           // ✅ 개선: 키워드는 최대 3개만 (가장 관련성 높은 것만)
           // 1. 청크 키워드에서 최대 2개 (가장 관련성 높은 것, 20자 이하만)
