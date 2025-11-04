@@ -888,10 +888,12 @@ Here is the source material:
       chunkReferencesCount: chunkReferences.length
     });
 
-    // ✅ 개선: 원숫자 매핑 범위 확장 (①~⑳까지 지원)
+    // ✅ 개선: 원숫자 매핑 범위 확장 (①~㉟까지 지원, 35개)
     const circleNumbers = [
       '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
-      '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'
+      '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
+      '㉑', '㉒', '㉓', '㉔', '㉕', '㉖', '㉗', '㉘', '㉙', '㉚',
+      '㉛', '㉜', '㉝', '㉞', '㉟'
     ];
     
     // 각 chunkReference에 대해 참조 문장 추출
@@ -1005,7 +1007,7 @@ Here is the source material:
       // 5. ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
         .replace(/\*\*\d+\*\*/g, '') // **18** 제거
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]/g, '') // 원형 숫자 제거 (확장)
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚㉛㉜㉝㉞㉟]/g, '') // 원형 숫자 제거 (35개 확장)
         .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
         .replace(/\*\*/g, '') // ✅ 남은 ** 제거
         .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
@@ -1069,7 +1071,7 @@ Here is the source material:
             console.log(`✅ 참조 번호 ${refNumber}: 청크 매칭 실패했지만 AI 응답에서 추출한 문장 반환`);
             return {
               ...chunkRef,
-              referencedSentence: cleaned.substring(0, 300), // 최대 300자로 증가
+              referencedSentence: cleaned.substring(0, 400), // ✅ 최대 400자로 확장 (제안의 50%)
               referencedSentenceIndex: undefined
             };
           }
@@ -1094,7 +1096,7 @@ Here is the source material:
       
       return {
         ...chunkRef,
-        referencedSentence: cleaned.substring(0, 300), // ✅ 최대 300자로 증가 (더 긴 문장 지원)
+        referencedSentence: cleaned.substring(0, 400), // ✅ 최대 400자로 확장 (제안의 50%)
         referencedSentenceIndex: sentenceIndex >= 0 ? sentenceIndex : undefined
       };
     });

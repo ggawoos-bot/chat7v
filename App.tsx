@@ -439,10 +439,12 @@ function App() {
   
   // ✅ 하이브리드 텍스트 추출 함수들
   const getCircleNumber = (num: number): string => {
-    // ✅ 개선: 원숫자 범위 확장 (①~⑳까지 지원)
+    // ✅ 개선: 원숫자 범위 확장 (①~㉟까지 지원, 35개)
     const circleNumbers = [
       '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
-      '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'
+      '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
+      '㉑', '㉒', '㉓', '㉔', '㉕', '㉖', '㉗', '㉘', '㉙', '㉚',
+      '㉛', '㉜', '㉝', '㉞', '㉟'
     ];
     return circleNumbers[num - 1] || '';
   };
@@ -550,14 +552,14 @@ function App() {
       // ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
         .replace(/\*\*\d+\*\*/g, '') // **18** 제거
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]/g, '') // 원형 숫자 제거 (확장)
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚㉛㉜㉝㉞㉟]/g, '') // 원형 숫자 제거 (35개 확장)
         .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
         .replace(/\*\*/g, '') // ✅ 남은 ** 제거
         .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
         .trim();
       
       if (cleaned.length >= 15) {
-        return cleaned.substring(0, 200); // 최대 200자로 증가 (더 긴 문장 지원)
+        return cleaned.substring(0, 300); // ✅ 최대 300자로 확장 (제안의 50%)
       } else {
         console.warn(`⚠️ 추출된 문장이 너무 짧음: ${cleaned}`);
       }
@@ -618,7 +620,7 @@ function App() {
     // 1순위: referencedSentence 사용 (AI가 실제로 인용한 문장)
     if (referencedSentence && referencedSentence.length >= 15) {
       console.log('✅ [1순위] referencedSentence 사용:', referencedSentence.substring(0, 60));
-      return referencedSentence.substring(0, 60); // 최대 60자
+      return referencedSentence.substring(0, 105); // ✅ 최대 105자로 확장 (제안의 50%)
     } else if (referencedSentence) {
       console.log('⚠️ referencedSentence가 너무 짧음:', referencedSentence.substring(0, 30));
     } else {
@@ -653,38 +655,89 @@ function App() {
     return fallback;
   };
 
+  // ✅ 방안 2: referencedSentenceIndex 기반 정확한 문장 추출 함수
+  const extractSentenceByIndex = (chunkContent: string, sentenceIndex: number): string | null => {
+    if (!chunkContent || sentenceIndex === undefined || sentenceIndex < 0) {
+      return null;
+    }
+    
+    // 문장 분리 (개선된 문장 분리 로직)
+    const sentences = chunkContent
+      .split(/[.。!！?？\n]/)
+      .map(s => s.trim())
+      .filter(s => s.length >= 10); // 최소 10자 이상
+    
+    if (sentenceIndex >= 0 && sentenceIndex < sentences.length) {
+      const targetSentence = sentences[sentenceIndex].trim();
+      if (targetSentence.length >= 15) {
+        console.log(`✅ [방안 2] referencedSentenceIndex(${sentenceIndex})로 문장 추출:`, targetSentence.substring(0, 60));
+        return targetSentence;
+      }
+    }
+    
+    console.warn(`⚠️ [방안 2] referencedSentenceIndex(${sentenceIndex})로 문장 추출 실패 (문장 개수: ${sentences.length})`);
+    return null;
+  };
+
   // ✅ 참조 클릭 이벤트 리스너 - 새 창에서 PDF 열기 또는 기존 창 페이지 이동
   useEffect(() => {
     const handleReferenceClick = async (event: CustomEvent) => {
       console.log('📥 App.tsx에서 referenceClick 이벤트 수신:', event.detail);
-      const { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, responseText, referenceNumber, referencedSentence } = event.detail;
+      const { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, responseText, referenceNumber, referencedSentence, referencedSentenceIndex } = event.detail;
       console.log('📝 설정할 값:', { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, referencedSentence });
       
       // ✅ 개선: 참조 문장이 있으면 PDF에서 정확한 페이지 검색
       let actualPage = page || logicalPageNumber || 1;
       
-      // 검색할 문장 추출 (우선순위: referencedSentence > AI 응답에서 추출 > chunkContent)
-      // extractSearchText 결과를 재사용하여 중복 호출 방지
-      const coreSearchText = extractSearchText(chunkContent, responseText, referenceNumber || 0, referencedSentence);
-      let searchSentence = referencedSentence || coreSearchText;
+      // ✅ 방안 2: referencedSentenceIndex 기반 정확한 문장 추출 (최우선)
+      let searchSentence: string | null = null;
+      let searchSource = 'unknown';
       
-      // referencedSentence가 없으면 AI 응답에서 직접 추출 시도
+      if (referencedSentenceIndex !== undefined && referencedSentenceIndex !== null && chunkContent) {
+        const indexedSentence = extractSentenceByIndex(chunkContent, referencedSentenceIndex);
+        if (indexedSentence && indexedSentence.length >= 15) {
+          searchSentence = indexedSentence;
+          searchSource = 'referencedSentenceIndex';
+          console.log('✅ [방안 2 우선] referencedSentenceIndex로 정확한 문장 추출 성공');
+        }
+      }
+      
+      // 1순위: referencedSentence (AI가 실제로 인용한 문장)
+      if (!searchSentence && referencedSentence && referencedSentence.length >= 15) {
+        searchSentence = referencedSentence;
+        searchSource = 'referencedSentence';
+        console.log('✅ [1순위] referencedSentence 사용');
+      }
+      
+      // 2순위: extractSearchText (AI 응답에서 추출 또는 청크에서 추출)
+      if (!searchSentence || searchSentence.length < 15) {
+        const coreSearchText = extractSearchText(chunkContent, responseText, referenceNumber || 0, referencedSentence);
+        if (coreSearchText && coreSearchText.length >= 15) {
+          searchSentence = coreSearchText;
+          searchSource = 'extractSearchText';
+          console.log('✅ [2순위] extractSearchText 사용');
+        }
+      }
+      
+      // 3순위: AI 응답에서 직접 추출 시도
       if (!searchSentence || searchSentence.length < 15) {
         if (responseText && referenceNumber > 0) {
           const sentenceFromResponse = extractSentenceFromResponse(responseText, referenceNumber);
           if (sentenceFromResponse && sentenceFromResponse.length >= 15) {
             searchSentence = sentenceFromResponse;
-            console.log('✅ [Fallback 1] AI 응답에서 문장 추출:', sentenceFromResponse.substring(0, 60));
+            searchSource = 'AI 응답 직접 추출';
+            console.log('✅ [3순위] AI 응답에서 문장 추출:', sentenceFromResponse.substring(0, 60));
           }
         }
-        
-        // 여전히 없으면 chunkContent에서 핵심 문장 추출 (주의: 잘못된 페이지일 수 있음)
-        if ((!searchSentence || searchSentence.length < 15) && chunkContent) {
-          const bestSentence = extractBestSentence(chunkContent);
-          if (bestSentence && bestSentence.length >= 15) {
-            searchSentence = bestSentence;
-            console.log('⚠️ [Fallback 2] 청크에서 추출 (주의: 잘못된 페이지일 수 있음):', bestSentence.substring(0, 60));
-          }
+      }
+      
+      // 4순위: chunkContent에서 핵심 문장 추출 (주의: 잘못된 페이지일 수 있음)
+      if ((!searchSentence || searchSentence.length < 15) && chunkContent) {
+        const bestSentence = extractBestSentence(chunkContent);
+        if (bestSentence && bestSentence.length >= 15) {
+          searchSentence = bestSentence;
+          searchSource = '청크 핵심 문장';
+          console.log('⚠️ [4순위] 청크에서 추출 (주의: 잘못된 페이지일 수 있음):', bestSentence.substring(0, 60));
         }
       }
       
@@ -700,7 +753,8 @@ function App() {
             searchSentence: searchSentence.substring(0, 50),
             fallbackPage: actualPage,
             hasReferencedSentence: !!referencedSentence,
-            source: referencedSentence ? 'referencedSentence' : (coreSearchText ? 'AI 응답/청크' : 'unknown')
+            hasReferencedSentenceIndex: referencedSentenceIndex !== undefined && referencedSentenceIndex !== null,
+            source: searchSource
           });
           
           // PDF에서 정확한 페이지 검색
