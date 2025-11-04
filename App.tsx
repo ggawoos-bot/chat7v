@@ -231,11 +231,141 @@ function App() {
   // ✅ 열린 PDF 창 참조 저장 (전역)
   const pdfViewerWindowRef = React.useRef<Window | null>(null);
   
+  // ✅ 하이브리드 텍스트 추출 함수들
+  const getCircleNumber = (num: number): string => {
+    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+    return circleNumbers[num - 1] || '';
+  };
+
+  // AI 응답에서 참조 번호 주변 문장 추출
+  const extractSentenceFromResponse = (responseText: string, referenceNumber: number): string | null => {
+    if (!responseText || referenceNumber <= 0) return null;
+    
+    // 참조 번호 패턴 찾기 (예: **2**, ② 등)
+    const boldPattern = new RegExp(`\\*\\*${referenceNumber}\\*\\*`, 'g');
+    const circlePattern = getCircleNumber(referenceNumber);
+    
+    let matchIndex = -1;
+    let matchText = '';
+    
+    // **2** 형식 찾기
+    const boldMatch = responseText.match(boldPattern);
+    if (boldMatch && boldMatch.length > 0) {
+      matchIndex = responseText.indexOf(boldMatch[0]);
+      matchText = boldMatch[0];
+    } else if (circlePattern) {
+      // ② 형식 찾기
+      const circleIndex = responseText.indexOf(circlePattern);
+      if (circleIndex >= 0) {
+        matchIndex = circleIndex;
+        matchText = circlePattern;
+      }
+    }
+    
+    if (matchIndex < 0) return null;
+    
+    // 참조 번호 주변의 문맥 추출 (앞 150자 ~ 뒤 150자)
+    const start = Math.max(0, matchIndex - 150);
+    const end = Math.min(responseText.length, matchIndex + matchText.length + 150);
+    const context = responseText.substring(start, end);
+    
+    // 문장 경계에서 자르기
+    const sentences = context.split(/[.。!！?？\n]/).map(s => s.trim()).filter(s => s.length > 0);
+    const refIndex = sentences.findIndex(s => s.includes(matchText));
+    
+    if (refIndex >= 0) {
+      // 참조 번호가 포함된 문장 또는 그 앞 문장
+      let targetSentence = '';
+      
+      // 참조 번호가 포함된 문장 찾기
+      if (refIndex > 0 && sentences[refIndex].includes(matchText)) {
+        // 참조 번호 앞 문장도 확인
+        targetSentence = sentences[refIndex - 1] || sentences[refIndex];
+      } else {
+        targetSentence = sentences[refIndex];
+      }
+      
+      // 참조 번호 제거 및 정리
+      const cleaned = targetSentence
+        .replace(/\*\*\d+\*\*/g, '') // **2** 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
+        .trim();
+      
+      if (cleaned.length >= 15) {
+        return cleaned.substring(0, 60); // 최대 60자
+      }
+    }
+    
+    return null;
+  };
+
+  // chunkContent에서 가장 긴/핵심 문장 추출
+  const extractBestSentence = (chunkContent: string): string | null => {
+    if (!chunkContent) return null;
+    
+    // 문장 분할 (개선: 더 정확한 문장 분할)
+    const sentences = chunkContent
+      .split(/[.。!！?？\n]/)
+      .map(s => s.trim())
+      .filter(s => s.length >= 10); // 최소 10자 이상
+    
+    if (sentences.length === 0) return null;
+    
+    // 제목이나 헤더 제외 (■, ●, ▶ 등으로 시작하는 짧은 문장 제외)
+    const validSentences = sentences.filter(s => {
+      const trimmed = s.trim();
+      if (trimmed.length === 0) return false;
+      const firstChar = trimmed[0];
+      // 특수 문자로 시작하지만 충분히 긴 문장은 포함
+      return !['■', '●', '▶', '○', '※'].includes(firstChar) || trimmed.length >= 25;
+    });
+    
+    if (validSentences.length === 0) {
+      // 필터링 결과가 없으면 원본에서 가장 긴 문장 사용
+      const longest = sentences.reduce((a, b) => a.length > b.length ? a : b);
+      return longest.substring(0, 60);
+    }
+    
+    // 가장 긴 문장 선택 (핵심 내용일 가능성 높음)
+    const longest = validSentences.reduce((a, b) => a.length > b.length ? a : b);
+    return longest.substring(0, 60);
+  };
+
+  // 하이브리드 텍스트 추출 (1순위: AI 응답, 2순위: chunkContent, 3순위: 기본값)
+  const extractSearchText = (
+    chunkContent: string | undefined,
+    responseText: string | undefined,
+    referenceNumber: number
+  ): string | undefined => {
+    // 1순위: AI 응답에서 참조 번호 주변 문장 추출
+    if (responseText && referenceNumber > 0) {
+      const sentenceFromResponse = extractSentenceFromResponse(responseText, referenceNumber);
+      if (sentenceFromResponse) {
+        console.log('✅ AI 응답에서 문장 추출:', sentenceFromResponse);
+        return sentenceFromResponse;
+      }
+    }
+    
+    // 2순위: chunkContent에서 가장 긴/핵심 문장 선택
+    if (chunkContent) {
+      const bestSentence = extractBestSentence(chunkContent);
+      if (bestSentence) {
+        console.log('✅ 청크에서 핵심 문장 추출:', bestSentence);
+        return bestSentence;
+      }
+    }
+    
+    // 3순위: 기본값 (첫 30자)
+    const fallback = chunkContent ? chunkContent.substring(0, 30) : undefined;
+    console.log('⚠️ 기본값 사용:', fallback);
+    return fallback;
+  };
+
   // ✅ 참조 클릭 이벤트 리스너 - 새 창에서 PDF 열기 또는 기존 창 페이지 이동
   useEffect(() => {
     const handleReferenceClick = (event: CustomEvent) => {
       console.log('📥 App.tsx에서 referenceClick 이벤트 수신:', event.detail);
-      const { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords } = event.detail;
+      const { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords, responseText, referenceNumber } = event.detail;
       console.log('📝 설정할 값:', { documentId, chunkId, page, logicalPageNumber, filename, title, questionContent, chunkContent, keywords });
       
       // PDF 파일명과 페이지 정보가 있으면 새 창에서 PDF 열기
@@ -251,21 +381,9 @@ function App() {
           
           // 하이라이트할 키워드 추출 (개선: 정확하고 적은 키워드만 선택)
           const highlightKeywords: string[] = [];
-          let coreSearchText: string | undefined = undefined;
           
-          // ✅ 개선: 청크 내용에서 핵심 문구 추출 (20-50자 정도의 짧은 핵심 문장)
-          if (chunkContent && chunkContent.length > 0) {
-            // 청크 내용의 핵심 문구 추출 (문장 경계에서)
-            const sentences = chunkContent.split(/[.。!！?？\n]/).filter(s => s.trim().length >= 10);
-            if (sentences.length > 0) {
-              // 첫 번째 문장을 핵심 문구로 사용 (30자 이내)
-              const corePhrase = sentences[0].trim().substring(0, 30);
-              if (corePhrase.length >= 10) {
-                // 핵심 문구를 검색 텍스트로 사용 (키워드가 아닌)
-                coreSearchText = corePhrase;
-              }
-            }
-          }
+          // ✅ 하이브리드 텍스트 추출 (AI 응답 우선, chunkContent 폴백)
+          const coreSearchText = extractSearchText(chunkContent, responseText, referenceNumber || 0);
           
           // ✅ 개선: 키워드는 최대 3개만 (가장 관련성 높은 것만)
           // 1. 청크 키워드에서 최대 2개 (가장 관련성 높은 것, 20자 이하만)

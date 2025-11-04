@@ -40,6 +40,148 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
     return highlightedText;
   };
 
+  // ✅ AI 응답에서 참조 번호 주변 문장 추출 (툴팁용)
+  const extractSentenceFromResponseForTooltip = (responseText: string, referenceNumber: number): string | null => {
+    if (!responseText || referenceNumber <= 0) return null;
+    
+    const boldPattern = new RegExp(`\\*\\*${referenceNumber}\\*\\*`, 'g');
+    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+    const circlePattern = circleNumbers[referenceNumber - 1] || '';
+    
+    let matchIndex = -1;
+    let matchText = '';
+    
+    const boldMatch = responseText.match(boldPattern);
+    if (boldMatch && boldMatch.length > 0) {
+      matchIndex = responseText.indexOf(boldMatch[0]);
+      matchText = boldMatch[0];
+    } else if (circlePattern) {
+      const circleIndex = responseText.indexOf(circlePattern);
+      if (circleIndex >= 0) {
+        matchIndex = circleIndex;
+        matchText = circlePattern;
+      }
+    }
+    
+    if (matchIndex < 0) return null;
+    
+    // 참조 번호 주변 문맥 추출
+    const start = Math.max(0, matchIndex - 100);
+    const end = Math.min(responseText.length, matchIndex + matchText.length + 100);
+    const context = responseText.substring(start, end);
+    
+    const sentences = context.split(/[.。!！?？\n]/).map(s => s.trim()).filter(s => s.length > 0);
+    const refIndex = sentences.findIndex(s => s.includes(matchText));
+    
+    if (refIndex >= 0) {
+      let targetSentence = '';
+      if (refIndex > 0 && sentences[refIndex].includes(matchText)) {
+        targetSentence = sentences[refIndex - 1] || sentences[refIndex];
+      } else {
+        targetSentence = sentences[refIndex];
+      }
+      
+      const cleaned = targetSentence
+        .replace(/\*\*\d+\*\*/g, '')
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '')
+        .trim();
+      
+      if (cleaned.length >= 15) {
+        return cleaned.substring(0, 100);
+      }
+    }
+    
+    return null;
+  };
+
+  // ✅ 가장 유사한 문장 찾기 (간단한 텍스트 매칭)
+  const findMostSimilarSentence = (chunkContent: string, targetSentence: string | null): string | null => {
+    if (!targetSentence || !chunkContent) return null;
+    
+    // 문장 분할
+    const sentences = chunkContent
+      .split(/[.。!！?？\n]/)
+      .map(s => s.trim())
+      .filter(s => s.length >= 10);
+    
+    if (sentences.length === 0) return null;
+    
+    // 타겟 문장의 핵심 키워드 추출 (3글자 이상 단어)
+    const targetWords = targetSentence
+      .replace(/[^\w가-힣\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.trim().length >= 3)
+      .slice(0, 5); // 최대 5개 키워드
+    
+    if (targetWords.length === 0) return null;
+    
+    // 각 문장과의 유사도 계산 (공통 키워드 개수)
+    let bestSentence = sentences[0];
+    let bestScore = 0;
+    
+    sentences.forEach(sentence => {
+      const sentenceLower = sentence.toLowerCase();
+      let score = 0;
+      
+      targetWords.forEach(word => {
+        const wordLower = word.toLowerCase();
+        if (sentenceLower.includes(wordLower)) {
+          score += wordLower.length; // 긴 단어일수록 높은 점수
+        }
+      });
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestSentence = sentence;
+      }
+    });
+    
+    // 최소 점수 기준 (최소 1개 이상의 키워드가 일치해야 함)
+    if (bestScore > 0) {
+      return bestSentence;
+    }
+    
+    return null;
+  };
+
+  // ✅ 툴팁용 하이라이트 (키워드 + 가장 유사한 문장 강조)
+  const highlightForTooltip = (chunkContent: string, keywords?: string[], responseText?: string, referenceNumber?: number): string => {
+    // 1단계: 키워드 하이라이트
+    let highlighted = highlightKeywords(chunkContent, keywords);
+    
+    // 2단계: AI 응답에서 참조 번호 주변 문장 추출
+    let targetSentence: string | null = null;
+    if (responseText && referenceNumber) {
+      targetSentence = extractSentenceFromResponseForTooltip(responseText, referenceNumber);
+    }
+    
+    // 3단계: 가장 유사한 문장 찾기 및 강조
+    if (targetSentence) {
+      const similarSentence = findMostSimilarSentence(chunkContent, targetSentence);
+      
+      if (similarSentence && similarSentence.length >= 15) {
+        // 유사한 문장을 진하게 표시 (다른 색상)
+        const escaped = similarSentence
+          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          .substring(0, 150); // 너무 긴 문장은 잘라서 매칭
+        
+        if (escaped.length >= 15) {
+          const regex = new RegExp(`(${escaped})`, 'gi');
+          highlighted = highlighted.replace(regex, (match) => {
+            // 이미 하이라이트된 부분은 제외
+            if (match.includes('<mark')) {
+              return match;
+            }
+            // 강조 표시 (진하게 + 파란색 배경)
+            return `<span class="bg-blue-100 font-bold text-blue-900 px-1 rounded">${match}</span>`;
+          });
+        }
+      }
+    }
+    
+    return highlighted;
+  };
+
   // 클립보드 복사 함수
   const handleCopyToClipboard = async () => {
     try {
@@ -80,7 +222,14 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
         if (chunkIndex >= 0 && chunkIndex < message.chunkReferences.length) {
           const chunk = message.chunkReferences[chunkIndex];
           const content = chunk.content.substring(0, 2000) + (chunk.content.length > 2000 ? '...' : '');
-          const highlightedContent = highlightKeywords(content, chunk.keywords);
+          
+          // ✅ 개선: 키워드 + 가장 유사한 문장 강조
+          const highlightedContent = highlightForTooltip(
+            content, 
+            chunk.keywords, 
+            message.content, 
+            referenceNumber
+          );
           
           // ✅ 위치 계산: 마우스 이벤트가 있으면 마우스 위치 사용, 없으면 버튼 위치 사용
           let position: { x: number; y: number } | undefined = undefined;
@@ -175,7 +324,9 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
             filename, // ✅ PDF 파일명 추가
             questionContent, // ✅ 질문 내용 추가
             chunkContent: chunk.content || chunk.text || '', // ✅ 청크 내용 (하이라이트용)
-            keywords: chunk.keywords || [] // ✅ 청크 키워드 (하이라이트용)
+            keywords: chunk.keywords || [], // ✅ 청크 키워드 (하이라이트용)
+            responseText: message.content, // ✅ AI 응답 텍스트 추가 (하이라이트용)
+            referenceNumber // ✅ 참조 번호 추가 (하이라이트용)
           }
         }));
       }
