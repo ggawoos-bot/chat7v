@@ -888,8 +888,11 @@ Here is the source material:
       chunkReferencesCount: chunkReferences.length
     });
 
-    // 원숫자 매핑
-    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+    // ✅ 개선: 원숫자 매핑 범위 확장 (①~⑳까지 지원)
+    const circleNumbers = [
+      '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
+      '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'
+    ];
     
     // 각 chunkReference에 대해 참조 문장 추출
     const updatedReferences = chunkReferences.map((chunkRef, index) => {
@@ -1001,8 +1004,8 @@ Here is the source material:
       
       // 5. ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
-        .replace(/\*\*\d+\*\*/g, '') // **2** 제거
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
+        .replace(/\*\*\d+\*\*/g, '') // **18** 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]/g, '') // 원형 숫자 제거 (확장)
         .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
         .replace(/\*\*/g, '') // ✅ 남은 ** 제거
         .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
@@ -1061,6 +1064,15 @@ Here is the source material:
           };
         } else {
           console.log(`⚠️ 참조 번호 ${refNumber}: 청크 내용에서 매칭 문장을 찾지 못함`);
+          // ✅ 개선: 청크 매칭 실패 시에도 AI 응답에서 추출한 문장 반환 (더 나은 페이지 검색을 위해)
+          if (cleaned && cleaned.length >= 15) {
+            console.log(`✅ 참조 번호 ${refNumber}: 청크 매칭 실패했지만 AI 응답에서 추출한 문장 반환`);
+            return {
+              ...chunkRef,
+              referencedSentence: cleaned.substring(0, 300), // 최대 300자로 증가
+              referencedSentenceIndex: undefined
+            };
+          }
           return chunkRef;
         }
       }
@@ -1082,7 +1094,7 @@ Here is the source material:
       
       return {
         ...chunkRef,
-        referencedSentence: cleaned.substring(0, 200), // 최대 200자로 제한
+        referencedSentence: cleaned.substring(0, 300), // ✅ 최대 300자로 증가 (더 긴 문장 지원)
         referencedSentenceIndex: sentenceIndex >= 0 ? sentenceIndex : undefined
       };
     });

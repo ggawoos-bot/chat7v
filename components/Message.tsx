@@ -45,7 +45,11 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
     if (!responseText || referenceNumber <= 0) return null;
     
     const boldPattern = new RegExp(`\\*\\*${referenceNumber}\\*\\*`, 'g');
-    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+    // ✅ 개선: 원숫자 범위 확장 (①~⑳까지 지원)
+    const circleNumbers = [
+      '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
+      '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'
+    ];
     const circlePattern = circleNumbers[referenceNumber - 1] || '';
     
     let matchIndex = -1;
@@ -91,10 +95,10 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
         targetSentence = sentences[refIndex];
       }
       
-      // ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
+      // ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거 (원숫자 범위 확장)
       const cleaned = targetSentence
-        .replace(/\*\*\d+\*\*/g, '') // **2** 제거
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
+        .replace(/\*\*\d+\*\*/g, '') // **18** 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]/g, '') // 원형 숫자 제거 (확장)
         .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
         .replace(/\*\*/g, '') // ✅ 남은 ** 제거
         .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
