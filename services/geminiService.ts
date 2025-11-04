@@ -174,10 +174,14 @@ IMPORTANT INSTRUCTIONS:
 - Format: Text **1**, Text **2**, Text **1 2** for multiple references
 - Example: "어린이집은 법정 금연구역입니다 **1 2**."
 - The numbers inside ** (e.g., **1**, **2**, **3**) will be displayed as clickable reference buttons
-- Each reference number (1, 2, 3...) must correspond to the order of sources used in your answer
+- **CRITICAL: Each reference number (1, 2, 3...) MUST correspond EXACTLY to the order of sources provided in the context**
+  * If the context shows "[참조 1 | 문서 1: ...]", you MUST use **1** when referencing that source
+  * If the context shows "[참조 2 | 문서 2: ...]", you MUST use **2** when referencing that source
+  * The reference number MUST match the order number in the context (1-based index)
 - Use **X Y Z** format when referencing multiple sources in one statement (e.g., "**1 2 3**")
 - DO NOT write references like "(국민건강증진법, p.6)" - use only **1**, **2**, **3** format
 - Place reference numbers at the END of sentences where you provide information
+- **VERIFICATION**: Before finalizing your response, verify that each reference number you use matches the corresponding source in the provided context
 23. Format the 참조문서 section (only when needed) as follows:
     ### 참조문서
     - **국민건강증진법**: 국민건강증진법률 시행령 시행규칙(202508) - 제1조, 제3조, 제5조
@@ -775,6 +779,100 @@ Here is the source material:
   // ✅ 청크 참조 정보 초기화
   clearChunkReferences(): void {
     this.lastChunkReferences = [];
+  }
+
+  /**
+   * 응답 텍스트와 chunkReferences를 검증하여 잘못된 매핑을 감지하고 경고
+   */
+  validateAndFixReferences(responseText: string, chunkReferences: any[]): any[] {
+    if (!responseText || !chunkReferences || chunkReferences.length === 0) {
+      return chunkReferences;
+    }
+
+    // 응답에서 참조 번호 추출 (①, ②, ③ 등 또는 **1**, **2**, **3** 형식)
+    const refPattern = /(\*\*(\d+)\*\*|([①②③④⑤⑥⑦⑧⑨⑩]))/g;
+    const matches = responseText.match(refPattern);
+    
+    if (!matches || matches.length === 0) {
+      console.log('✅ 응답에 참조 번호가 없습니다.');
+      return chunkReferences;
+    }
+
+    // 추출된 참조 번호들을 정수로 변환
+    const refNumbers = new Set<number>();
+    matches.forEach(match => {
+      // **1** 형식
+      const boldMatch = match.match(/\*\*(\d+)\*\*/);
+      if (boldMatch) {
+        refNumbers.add(parseInt(boldMatch[1]));
+      } else {
+        // ①, ② 형식
+        const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+        const circleIndex = circleNumbers.indexOf(match);
+        if (circleIndex >= 0) {
+          refNumbers.add(circleIndex + 1);
+        }
+      }
+    });
+
+    // 각 참조 번호가 실제로 사용된 청크인지 확인
+    const validatedReferences: any[] = [];
+    const warnings: string[] = [];
+
+    refNumbers.forEach(refNumber => {
+      if (refNumber > 0 && refNumber <= chunkReferences.length) {
+        const chunk = chunkReferences[refNumber - 1];
+        
+        if (!chunk) {
+          warnings.push(`⚠️ 참조 번호 ${refNumber}에 해당하는 청크가 없습니다.`);
+          return;
+        }
+
+        // 청크 내용의 핵심 키워드가 응답에 포함되는지 확인
+        const chunkKeywords = this.extractKeywordsForValidation(chunk.content || '');
+        const isMentioned = chunkKeywords.some(keyword => 
+          keyword.length >= 3 && responseText.includes(keyword)
+        );
+
+        if (!isMentioned && chunkKeywords.length > 0) {
+          warnings.push(
+            `⚠️ 참조 번호 ${refNumber}가 실제로 사용되지 않았을 수 있습니다. ` +
+            `예상 문서: ${chunk.documentTitle || chunk.title || '알 수 없음'}, ` +
+            `청크 미리보기: ${(chunk.content || '').substring(0, 50)}...`
+          );
+        }
+
+        validatedReferences.push(chunk);
+      } else {
+        warnings.push(`⚠️ 참조 번호 ${refNumber}가 유효한 범위(1-${chunkReferences.length})를 벗어났습니다.`);
+      }
+    });
+
+    // 경고 로그 출력
+    if (warnings.length > 0) {
+      console.warn('📋 참조 번호 검증 결과:', warnings);
+    } else {
+      console.log('✅ 모든 참조 번호가 유효합니다.');
+    }
+
+    // 원본 chunkReferences 반환 (검증은 경고만 하고 수정하지 않음)
+    return chunkReferences;
+  }
+
+  /**
+   * 검증용 키워드 추출 (간단한 버전)
+   */
+  private extractKeywordsForValidation(text: string): string[] {
+    if (!text || text.length === 0) return [];
+    
+    // 3글자 이상의 단어 추출
+    const words = text
+      .replace(/[^\w가-힣\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.trim().length >= 3)
+      .slice(0, 10); // 최대 10개만
+    
+    return words;
   }
 
   // PDF.js를 로컬 파일에서 로드하는 함수 (최적화)
@@ -1875,10 +1973,11 @@ Here is the source material:
             }))
           });
 
-          // 3. 동적 프롬프트 생성 준비
+          // 3. 동적 프롬프트 생성 준비 (참조 ID 명확히 부여)
           const initialContextText = advancedSearchResult.chunks
             .map((chunk, index) => {
-              return `[문서 ${index + 1}: ${chunk.metadata.title} - ${chunk.location.section || '일반'}]\n${chunk.content}`;
+              const refNumber = index + 1;
+              return `[참조 ${refNumber} | 문서 ${refNumber}: ${chunk.metadata.title} - ${chunk.location.section || '일반'}]\n${chunk.content}\n\n※ 이 청크를 참조할 때는 반드시 **${refNumber}** 형식으로 표시하세요.`;
             })
             .join('\n\n---\n\n');
 
@@ -1933,10 +2032,11 @@ Here is the source material:
             // ✅ 최종 청크 업데이트
             finalChunks = selectedChunks;
             
-            // 선택된 청크로 컨텍스트 재구성
+            // 선택된 청크로 컨텍스트 재구성 (참조 ID 명확히 부여)
             finalContextText = selectedChunks
               .map((chunk, index) => {
-                return `[문서 ${index + 1}: ${chunk.metadata.title} - ${chunk.location.section || '일반'}]\n${chunk.content}`;
+                const refNumber = index + 1;
+                return `[참조 ${refNumber} | 문서 ${refNumber}: ${chunk.metadata.title} - ${chunk.location.section || '일반'}]\n${chunk.content}\n\n※ 이 청크를 참조할 때는 반드시 **${refNumber}** 형식으로 표시하세요.`;
               })
               .join('\n\n---\n\n');
             
@@ -1997,6 +2097,7 @@ Here is the source material:
                 // ✅ filename 추가 (Message.tsx에서 사용)
                 filename: matchingDoc?.filename || chunk.metadata?.source || chunk.location?.document || '',
                 documentFilename: matchingDoc?.filename || '', // ✅ 추가: 별칭
+                refId: index + 1, // ✅ 참조 ID 추가 (1-based index)
                 metadata: {
                   startPos: chunk.metadata?.startPosition || 0,
                   endPos: chunk.metadata?.endPosition || 0,

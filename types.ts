@@ -23,6 +23,7 @@ export interface ChunkReference {
   content: string;
   filename?: string; // ✅ PDF 파일명 추가
   documentFilename?: string; // ✅ 별칭 추가
+  refId?: number; // ✅ 참조 ID 추가 (1-based index)
   metadata?: {
     startPos: number;
     endPos: number;

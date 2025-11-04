@@ -81,9 +81,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           });
         }
         
-        // ✅ 스트리밍 완료 후 청크 참조 정보 추가
+        // ✅ 스트리밍 완료 후 청크 참조 정보 추가 및 검증
         const chunkReferences = geminiService.getLastChunkReferences();
         if (chunkReferences && chunkReferences.length > 0) {
+          // ✅ 응답 검증 (잘못된 매핑 감지 및 경고)
+          geminiService.validateAndFixReferences(fullResponse, chunkReferences);
+          
           setMessages(prev => {
             const newMessages = [...prev];
             const lastMessage = newMessages[newMessages.length - 1];
