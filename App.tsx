@@ -271,7 +271,8 @@ function App() {
   };
   
   /**
-   * PDF에서 문장을 검색하여 정확한 페이지 찾기 (97% 이상 정확도)
+   * PDF에서 문장을 검색하여 정확한 페이지 찾기 (주변 3페이지 집중 분석 + 단어 단위 매칭)
+   * 청크가 페이지 경계에 걸쳐있는 경우를 대비한 개선된 버전
    */
   const findExactPageInPDF = async (
     pdfUrl: string, 
@@ -279,7 +280,7 @@ function App() {
     fallbackPage: number
   ): Promise<number> => {
     try {
-      console.log('🔍 PDF에서 정확한 페이지 검색 시작:', {
+      console.log('🔍 PDF에서 정확한 페이지 검색 시작 (주변 3페이지 분석 + 단어 매칭):', {
         searchSentence: searchSentence.substring(0, 50),
         fallbackPage
       });
@@ -313,87 +314,147 @@ function App() {
         return fallbackPage;
       }
 
-      // 페이지별 매칭 점수 계산
-      const pageScores: Array<{page: number, score: number, matches: number}> = [];
+      // ✅ 개선: 주변 3페이지(-1, 0, +1)만 집중 분석
+      const candidatePages: number[] = [];
+      const startPage = Math.max(1, fallbackPage - 1);
+      const endPage = Math.min(pdf.numPages, fallbackPage + 1);
       
-      // 병렬 처리로 성능 최적화 (최대 10페이지씩)
-      const batchSize = 10;
-      for (let startPage = 1; startPage <= pdf.numPages; startPage += batchSize) {
-        const endPage = Math.min(startPage + batchSize - 1, pdf.numPages);
-        
-        const pagePromises = [];
-        for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
-          pagePromises.push(
-            pdf.getPage(pageNum).then(async (page: any) => {
-              const textContent = await page.getTextContent();
-              
-              // 페이지 텍스트 추출 (줄바꿈 보존)
-              let pageText = '';
-              for (let i = 0; i < textContent.items.length; i++) {
-                const item = textContent.items[i];
-                pageText += item.str;
-                if (item.hasEOL) {
-                  pageText += '\n';
-                }
-              }
-              
-              // 정규화된 페이지 텍스트
-              const normalizedPageText = normalizeTextForSearch(pageText);
-              
-              // 매칭 점수 계산
-              let score = 0;
-              let matches = 0;
-              
-              // 1. 전체 문장 포함 여부 (최고 점수)
-              if (normalizedPageText.includes(normalizedSearch)) {
-                score += 1000;
-                matches++;
-              }
-              
-              // 2. 핵심 문구 포함 여부 (문장의 앞부분 50% + 뒷부분 50%)
-              const searchLength = normalizedSearch.length;
-              const firstHalf = normalizedSearch.substring(0, Math.floor(searchLength * 0.5));
-              const secondHalf = normalizedSearch.substring(Math.floor(searchLength * 0.5));
-              
-              if (normalizedPageText.includes(firstHalf)) {
-                score += 300;
-                matches++;
-              }
-              if (normalizedPageText.includes(secondHalf)) {
-                score += 300;
-                matches++;
-              }
-              
-              // 3. 문장 단위 매칭 (더 정확)
-              const searchSentences = normalizedSearch.split(/[.!?。]/).filter(s => s.trim().length >= 10);
-              const pageSentences = normalizedPageText.split(/[.!?。]/).filter(s => s.trim().length >= 10);
-              
-              for (const searchSentence of searchSentences) {
-                for (const pageSentence of pageSentences) {
-                  if (pageSentence.includes(searchSentence.trim()) || 
-                      searchSentence.trim().includes(pageSentence)) {
-                    score += 200;
-                    matches++;
-                  }
-                }
-              }
-              
-              // 4. 단어 단위 매칭 (보조 점수)
-              const searchWords = normalizedSearch.split(/\s+/).filter(w => w.length >= 3);
-              const pageWords = normalizedPageText.split(/\s+/);
-              const matchedWords = searchWords.filter(sw => 
-                pageWords.some(pw => pw.includes(sw) || sw.includes(pw))
-              );
-              score += matchedWords.length * 10;
-              
-              return { page: pageNum, score, matches };
-            })
-          );
-        }
-        
-        const batchResults = await Promise.all(pagePromises);
-        pageScores.push(...batchResults);
+      for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+        candidatePages.push(pageNum);
       }
+      
+      console.log(`📄 주변 페이지 분석: ${candidatePages.join(', ')} (총 ${pdf.numPages}페이지 중)`);
+
+      // ✅ 개선: 검색 문장을 단어로 분리 (줄바꿈/공백 문제 해결)
+      const searchWords = normalizedSearch
+        .split(/\s+/) // 공백으로 분리
+        .filter(w => w.trim().length >= 2) // 최소 2자 이상 단어만
+        .filter(w => {
+          // 불필요한 단어 제거 (조사, 접속사 등)
+          const stopWords = ['은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '만', '로', '으로'];
+          return !stopWords.includes(w.trim());
+        });
+      
+      console.log(`📝 검색 단어 (${searchWords.length}개):`, searchWords.slice(0, 10).join(', '));
+
+      // 주변 3페이지에서 매칭 점수 계산
+      const pageScores: Array<{page: number, score: number, matchedWords: number, wordRatio: number}> = [];
+      
+      const pagePromises = candidatePages.map(pageNum => 
+        pdf.getPage(pageNum).then(async (page: any) => {
+          const textContent = await page.getTextContent();
+          
+          // 페이지 텍스트 추출 (줄바꿈 보존)
+          let pageText = '';
+          for (let i = 0; i < textContent.items.length; i++) {
+            const item = textContent.items[i];
+            pageText += item.str;
+            if (item.hasEOL) {
+              pageText += '\n';
+            }
+          }
+          
+          // 정규화된 페이지 텍스트
+          const normalizedPageText = normalizeTextForSearch(pageText);
+          
+          // ✅ 개선: 페이지 텍스트도 단어로 분리
+          const pageWords = normalizedPageText
+            .split(/\s+/)
+            .filter(w => w.trim().length >= 2);
+          
+          // ✅ 핵심: 단어 단위 매칭 (줄바꿈/공백 문제 해결)
+          let matchedWords = 0;
+          const matchedWordList: string[] = [];
+          
+          for (const searchWord of searchWords) {
+            // 정확한 단어 매칭 또는 포함 관계 확인
+            const found = pageWords.some(pageWord => {
+              // 정확히 일치하거나 서로 포함하는 경우
+              return pageWord === searchWord || 
+                     pageWord.includes(searchWord) || 
+                     searchWord.includes(pageWord);
+            });
+            
+            if (found) {
+              matchedWords++;
+              matchedWordList.push(searchWord);
+            }
+          }
+          
+          // 단어 매칭 비율 계산
+          const wordRatio = searchWords.length > 0 ? matchedWords / searchWords.length : 0;
+          
+          // ✅ 점수 계산 (단어 매칭 기반)
+          let score = 0;
+          
+          // 1. 단어 매칭 점수 (가장 중요 - 줄바꿈/공백 문제 해결)
+          if (wordRatio >= 0.8) {
+            // 80% 이상 단어 매칭 = 매우 높은 점수
+            score += 1000 + (matchedWords * 50);
+          } else if (wordRatio >= 0.6) {
+            // 60% 이상 단어 매칭 = 높은 점수
+            score += 500 + (matchedWords * 30);
+          } else if (wordRatio >= 0.4) {
+            // 40% 이상 단어 매칭 = 중간 점수
+            score += 200 + (matchedWords * 20);
+          } else if (wordRatio >= 0.2) {
+            // 20% 이상 단어 매칭 = 낮은 점수
+            score += 50 + (matchedWords * 10);
+          }
+          
+          // 2. 전체 문장 포함 여부 (보너스 - 정확히 일치할 때만)
+          if (normalizedPageText.includes(normalizedSearch)) {
+            score += 500; // 보너스 점수
+          }
+          
+          // 3. 연속된 단어 그룹 매칭 (문맥 보존)
+          if (searchWords.length >= 3) {
+            // 연속된 3개 이상 단어가 순서대로 매칭되는지 확인
+            let consecutiveMatches = 0;
+            let maxConsecutive = 0;
+            
+            for (let i = 0; i < searchWords.length; i++) {
+              const searchWord = searchWords[i];
+              const found = pageWords.some(pw => 
+                pw === searchWord || pw.includes(searchWord) || searchWord.includes(pw)
+              );
+              
+              if (found) {
+                consecutiveMatches++;
+                maxConsecutive = Math.max(maxConsecutive, consecutiveMatches);
+              } else {
+                consecutiveMatches = 0;
+              }
+            }
+            
+            if (maxConsecutive >= 3) {
+              score += maxConsecutive * 30; // 연속 매칭 보너스
+            }
+          }
+          
+          // 4. 원래 페이지에 가까울수록 보너스 점수 (동점 처리)
+          if (pageNum === fallbackPage) {
+            score += 30; // 원래 페이지에 보너스
+          }
+          
+          console.log(`📊 페이지 ${pageNum} 매칭 결과:`, {
+            점수: score,
+            매칭단어: `${matchedWords}/${searchWords.length}`,
+            매칭비율: `${(wordRatio * 100).toFixed(1)}%`,
+            매칭단어목록: matchedWordList.slice(0, 5).join(', ')
+          });
+          
+          return { 
+            page: pageNum, 
+            score, 
+            matchedWords, 
+            wordRatio 
+          };
+        })
+      );
+      
+      const results = await Promise.all(pagePromises);
+      pageScores.push(...results);
 
       // 가장 높은 점수의 페이지 선택
       if (pageScores.length === 0) {
@@ -403,22 +464,41 @@ function App() {
 
       // 점수 기준 정렬
       pageScores.sort((a, b) => {
+        // 1순위: 점수 높은 순
         if (b.score !== a.score) {
-          return b.score - a.score; // 점수 높은 순
+          return b.score - a.score;
         }
-        return a.page - b.page; // 같은 점수면 페이지 번호 낮은 순
+        // 2순위: 단어 매칭 비율 높은 순
+        if (b.wordRatio !== a.wordRatio) {
+          return b.wordRatio - a.wordRatio;
+        }
+        // 3순위: 매칭 단어 개수 많은 순
+        if (b.matchedWords !== a.matchedWords) {
+          return b.matchedWords - a.matchedWords;
+        }
+        // 4순위: 원래 페이지에 가까운 순
+        const aDistance = Math.abs(a.page - fallbackPage);
+        const bDistance = Math.abs(b.page - fallbackPage);
+        if (aDistance !== bDistance) {
+          return aDistance - bDistance;
+        }
+        // 5순위: 페이지 번호 낮은 순
+        return a.page - b.page;
       });
 
       const bestMatch = pageScores[0];
       console.log('✅ 최적 페이지 찾음:', {
         page: bestMatch.page,
         score: bestMatch.score,
-        matches: bestMatch.matches,
-        fallbackPage
+        matchedWords: `${bestMatch.matchedWords}/${searchWords.length}`,
+        wordRatio: `${(bestMatch.wordRatio * 100).toFixed(1)}%`,
+        fallbackPage,
+        changed: bestMatch.page !== fallbackPage
       });
 
       // 최소 점수 임계값 (너무 낮은 점수면 fallback 사용)
-      if (bestMatch.score >= 200) {
+      // 단어 매칭 비율이 20% 이상이거나 점수가 100 이상이면 사용
+      if (bestMatch.wordRatio >= 0.2 || bestMatch.score >= 100) {
         // 캐시에 저장 (캐시 크기 제한)
         if (pageSearchCache.current.size >= MAX_CACHE_SIZE) {
           const firstKey = pageSearchCache.current.keys().next().value;
@@ -427,7 +507,10 @@ function App() {
         pageSearchCache.current.set(cacheKey, bestMatch.page);
         return bestMatch.page;
       } else {
-        console.warn('⚠️ 점수가 너무 낮음, fallback 사용:', bestMatch.score);
+        console.warn('⚠️ 점수/매칭 비율이 너무 낮음, fallback 사용:', {
+          score: bestMatch.score,
+          wordRatio: bestMatch.wordRatio
+        });
         return fallbackPage;
       }
       
