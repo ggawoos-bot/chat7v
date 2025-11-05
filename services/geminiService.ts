@@ -898,25 +898,35 @@ Here is the source material:
     const updatedReferences = chunkReferences.map((chunkRef, index) => {
       const refNumber = chunkRef.refId || (index + 1);
       
-      // 1. 참조 번호 패턴 찾기 (**2**, ② 등)
+      // 1. 참조 번호 패턴 찾기 (**2**, [참조 2], ② 등)
       const boldPattern = new RegExp(`\\*\\*${refNumber}\\*\\*`, 'g');
+      const bracketPattern = new RegExp(`\\[참조\\s+${refNumber}\\b[^\\]]*\\]`, 'g'); // [참조 14] 또는 [참조 14, 15] 형식
       const circlePattern = circleNumbers[refNumber - 1] || '';
       
       let matchIndex = -1;
       let matchText = '';
       
-      // **2** 형식 찾기
+      // **2** 형식 찾기 (우선순위 1)
       const boldMatch = responseText.match(boldPattern);
       if (boldMatch && boldMatch.length > 0) {
         // 첫 번째 매칭 위치 사용
         matchIndex = responseText.indexOf(boldMatch[0]);
         matchText = boldMatch[0];
-      } else if (circlePattern) {
-        // ② 형식 찾기
-        const circleIndex = responseText.indexOf(circlePattern);
-        if (circleIndex >= 0) {
-          matchIndex = circleIndex;
-          matchText = circlePattern;
+      } 
+      // [참조 X] 형식 찾기 (우선순위 2)
+      else {
+        const bracketMatch = responseText.match(bracketPattern);
+        if (bracketMatch && bracketMatch.length > 0) {
+          matchIndex = responseText.indexOf(bracketMatch[0]);
+          matchText = bracketMatch[0];
+        }
+        // ② 형식 찾기 (우선순위 3)
+        else if (circlePattern) {
+          const circleIndex = responseText.indexOf(circlePattern);
+          if (circleIndex >= 0) {
+            matchIndex = circleIndex;
+            matchText = circlePattern;
+          }
         }
       }
       

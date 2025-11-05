@@ -24,6 +24,27 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
   // ✅ 디바운스를 위한 ref
   const hoverTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
+  // ✅ 원숫자 변환 함수 (35개까지 지원)
+  const getCircleNumber = (num: number): string => {
+    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', 
+                          '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
+                          '㉑', '㉒', '㉓', '㉔', '㉕', '㉖', '㉗', '㉘', '㉙', '㉚',
+                          '㉛', '㉜', '㉝', '㉞', '㉟'];
+    return num >= 1 && num <= 35 ? circleNumbers[num - 1] : '';
+  };
+
+  // ✅ AI 응답 전처리: [참조 X] 형식을 **X** 형식으로 변환
+  const preprocessResponse = (content: string): string => {
+    if (!content || isUser) return content;
+    
+    // [참조 X] 또는 [참조 X, Y, Z] 형식을 **X** 또는 **X Y Z** 형식으로 변환
+    return content.replace(/\[참조\s+(\d+(?:\s*,\s*\d+)*)\]/g, (match, numbers) => {
+      // 쉼표로 구분된 숫자들을 공백으로 구분된 숫자로 변환
+      const numList = numbers.split(/\s*,\s*/).map((n: string) => n.trim()).join(' ');
+      return `**${numList}**`;
+    });
+  };
+
   // ✅ 키워드 하이라이트 함수
   const highlightKeywords = (text: string, keywords?: string[]) => {
     if (!keywords || keywords.length === 0) return text;
@@ -45,21 +66,36 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
     if (!responseText || referenceNumber <= 0) return null;
     
     const boldPattern = new RegExp(`\\*\\*${referenceNumber}\\*\\*`, 'g');
-    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+    const bracketPattern = new RegExp(`\\[참조\\s+${referenceNumber}\\b[^\\]]*\\]`, 'g'); // [참조 14] 또는 [참조 14, 15] 형식
+    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', 
+                          '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
+                          '㉑', '㉒', '㉓', '㉔', '㉕', '㉖', '㉗', '㉘', '㉙', '㉚',
+                          '㉛', '㉜', '㉝', '㉞', '㉟'];
     const circlePattern = circleNumbers[referenceNumber - 1] || '';
     
     let matchIndex = -1;
     let matchText = '';
     
+    // 1. **숫자** 형식 찾기
     const boldMatch = responseText.match(boldPattern);
     if (boldMatch && boldMatch.length > 0) {
       matchIndex = responseText.indexOf(boldMatch[0]);
       matchText = boldMatch[0];
-    } else if (circlePattern) {
-      const circleIndex = responseText.indexOf(circlePattern);
-      if (circleIndex >= 0) {
-        matchIndex = circleIndex;
-        matchText = circlePattern;
+    } 
+    // 2. [참조 X] 형식 찾기 (우선순위 2)
+    else {
+      const bracketMatch = responseText.match(bracketPattern);
+      if (bracketMatch && bracketMatch.length > 0) {
+        matchIndex = responseText.indexOf(bracketMatch[0]);
+        matchText = bracketMatch[0];
+      }
+      // 3. 원숫자 형식 찾기 (우선순위 3)
+      else if (circlePattern) {
+        const circleIndex = responseText.indexOf(circlePattern);
+        if (circleIndex >= 0) {
+          matchIndex = circleIndex;
+          matchText = circlePattern;
+        }
       }
     }
     
@@ -435,6 +471,8 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
             <div className="prose prose-invert max-w-none [&_table]:border-collapse [&_table]:w-full [&_table]:my-4 [&_table]:border [&_table]:border-brand-secondary">
               <ReactMarkdown 
                 remarkPlugins={[remarkGfm]}
+                // ✅ AI 응답 전처리: [참조 X] 형식을 **X** 형식으로 변환
+                children={preprocessResponse(message.content)}
                 components={{
                   // ✅ 참조 번호를 클릭 가능한 버튼으로 변환
                   strong: ({ children, ...props }: any) => {
@@ -469,10 +507,10 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
                                   }}
                                   onMouseEnter={(e) => handleReferenceHover(num, true, uniqueKey, e)}
                                   onMouseLeave={() => handleReferenceHover(num, false, uniqueKey)}
-                                  className="inline-flex items-center justify-center w-3.5 h-3.5 min-w-[14px] rounded-full bg-blue-800 hover:bg-blue-900 text-white text-[10px] font-bold transition-colors shadow-sm"
+                                  className="inline-flex items-center justify-center w-5 h-5 min-w-[20px] rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors shadow-sm cursor-pointer"
                                   title={`참조 ${num} 클릭`}
                                 >
-                                  {num}
+                                  {getCircleNumber(num) || num}
                                 </button>
                                 {/* ✅ 툴팁은 전역으로 렌더링되므로 여기서는 제거 */}
                               </div>
