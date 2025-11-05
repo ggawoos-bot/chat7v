@@ -932,10 +932,14 @@ function App() {
   }, []);
 
   const handleSendMessage = useCallback(async (message: string): Promise<string> => {
+    // ✅ 질문 내용 저장 (SourceViewer에서 하이라이트용)
+    setQuestionContent(message);
     return await geminiService.generateResponse(message);
   }, []);
 
   const handleStreamingMessage = useCallback(async (message: string): Promise<AsyncGenerator<string, void, unknown>> => {
+    // ✅ 질문 내용 저장 (SourceViewer에서 하이라이트용)
+    setQuestionContent(message);
     return await geminiService.generateStreamingResponse(message);
   }, []);
 

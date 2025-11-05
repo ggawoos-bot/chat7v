@@ -2341,7 +2341,7 @@ Here is the source material:
             })
             .filter(ref => ref !== null);
 
-          // ✅ finalContextText로 dynamicPrompt 생성
+          // ✅ finalContextText로 dynamicPrompt 생성 (더 정교한 프롬프트)
           const dynamicPrompt = this.advancedSearchService.generateDynamicPrompt(
             questionAnalysis,
             finalContextText
@@ -2352,20 +2352,20 @@ Here is the source material:
             selectedChunks: finalChunks.length
           });
 
-          // 4. 동적 프롬프트를 사용한 세션 생성
-          const chatSession = await this.createNotebookChatSessionWithDynamicPrompt(
-            dynamicPrompt.systemInstruction,
-            finalContextText,
-            dynamicPrompt.userPrompt
+          // ✅ 개선: dynamicPrompt.systemInstruction 사용 (더 정교한 프롬프트)
+          // 중복 세션 생성 제거: createNotebookChatSessionWithDynamicPrompt 제거
+          // createDynamicSystemInstruction 대신 dynamicPrompt.systemInstruction 사용
+          // 단, dynamicPrompt.systemInstruction에는 contextText가 포함되지 않으므로 추가 필요
+          // SYSTEM_INSTRUCTION_TEMPLATE 형식으로 contextText 포함
+          const systemInstructionWithContext = dynamicPrompt.systemInstruction.includes('{sourceText}')
+            ? dynamicPrompt.systemInstruction.replace('{sourceText}', finalContextText)
+            : `${dynamicPrompt.systemInstruction}\n\nHere is the source material:\n---START OF SOURCE---\n${finalContextText}\n---END OF SOURCE---`;
+          
+          const newSession = await this.createNotebookChatSessionWithAnalysis(
+            systemInstructionWithContext
           );
 
-          // 4. 질문 분석 결과를 기반으로 동적 시스템 프롬프트 생성
-          const dynamicSystemInstruction = this.createDynamicSystemInstruction(questionAnalysis, finalContextText);
-          
-          // 5. 새 채팅 세션 생성 (질문 분석 결과 포함)
-          const newSession = await this.createNotebookChatSessionWithAnalysis(dynamicSystemInstruction);
-
-          // 5. 스트리밍 응답 생성
+          // 스트리밍 응답 생성
           const stream = await newSession.sendMessageStream({ message: message });
           
           return (async function* () {
