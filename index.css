@@ -1,0 +1,298 @@
+/* 기본 스타일 */
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Tailwind CSS 기본 클래스들 */
+.bg-brand-bg {
+  background-color: #f8fafc;
+}
+
+.text-brand-text-primary {
+  color: #1a202c;
+}
+
+/* 마크다운 표 스타일링 */
+.prose {
+  color: inherit;
+}
+
+/* prose-invert 클래스 커스터마이징 */
+.prose-invert {
+  --tw-prose-body: #e8eaed;
+  --tw-prose-headings: #8ab4f8;
+  --tw-prose-lead: #bdc1c6;
+  --tw-prose-links: #8ab4f8;
+  --tw-prose-bold: #e8eaed;
+  --tw-prose-counters: #bdc1c6;
+  --tw-prose-bullets: #4e5052;
+  --tw-prose-hr: #4e5052;
+  --tw-prose-quotes: #bdc1c6;
+  --tw-prose-quote-borders: #4e5052;
+  --tw-prose-captions: #bdc1c6;
+  --tw-prose-code: #8ab4f8;
+  --tw-prose-pre-code: #e8eaed;
+  --tw-prose-pre-bg: #131314;
+  --tw-prose-th-borders: #4e5052;
+  --tw-prose-td-borders: #4e5052;
+}
+
+/* 표 스타일 강제 적용 */
+.prose-invert table {
+  border-collapse: collapse !important;
+  width: 100% !important;
+  margin: 1rem 0 !important;
+  border: 1px solid #4e5052 !important;
+}
+
+.prose-invert th,
+.prose-invert td {
+  border: 1px solid #4e5052 !important;
+  padding: 0.75rem !important;
+  text-align: left !important;
+}
+
+.prose-invert th {
+  background-color: #4e5052 !important;
+  color: #e8eaed !important;
+  font-weight: 600 !important;
+}
+
+.prose table {
+  margin: 1rem 0;
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+.prose th,
+.prose td {
+  padding: 0.75rem;
+  text-align: left;
+  border: 1px solid #4e5052;
+  vertical-align: top;
+}
+
+.prose th {
+  background-color: #4e5052;
+  font-weight: 600;
+  color: #e8eaed;
+  position: sticky;
+  top: 0;
+}
+
+.prose tbody tr:nth-child(even) {
+  background-color: rgba(30, 31, 32, 0.3);
+}
+
+.prose tbody tr:hover {
+  background-color: rgba(138, 180, 248, 0.1);
+  transition: background-color 0.2s ease;
+}
+
+.prose tbody tr:last-child td {
+  border-bottom: 1px solid #4e5052;
+}
+
+/* 표 스크롤 컨테이너 */
+.prose .overflow-x-auto {
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* 모바일에서 표 스타일 */
+@media (max-width: 768px) {
+  .prose table {
+    font-size: 0.75rem;
+  }
+  
+  .prose th,
+  .prose td {
+    padding: 0.5rem 0.25rem;
+  }
+}
+
+/* 매우 작은 화면에서 표를 카드 형태로 변환 */
+@media (max-width: 640px) {
+  .prose table,
+  .prose thead,
+  .prose tbody,
+  .prose th,
+  .prose td,
+  .prose tr {
+    display: block;
+  }
+  
+  .prose thead tr {
+    position: absolute;
+    top: -9999px;
+    left: -9999px;
+  }
+  
+  .prose tr {
+    border: 1px solid #4e5052;
+    margin-bottom: 0.5rem;
+    padding: 0.5rem;
+    border-radius: 0.375rem;
+    background-color: #1e1f20;
+  }
+  
+  .prose td {
+    border: none;
+    position: relative;
+    padding-left: 50%;
+    text-align: left;
+  }
+  
+  .prose td:before {
+    content: attr(data-label) ": ";
+    position: absolute;
+    left: 6px;
+    width: 45%;
+    padding-right: 10px;
+    white-space: nowrap;
+    font-weight: 600;
+    color: #8ab4f8;
+  }
+}
+
+/* 마크다운 기타 요소 스타일링 */
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.25;
+}
+
+.prose h1:first-child, .prose h2:first-child, .prose h3:first-child {
+  margin-top: 0;
+}
+
+.prose ul, .prose ol {
+  margin: 1rem 0;
+  padding-left: 1.5rem;
+}
+
+.prose li {
+  margin: 0.25rem 0;
+}
+
+.prose blockquote {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-left: 4px solid #8ab4f8;
+  background-color: rgba(19, 19, 20, 0.5);
+  border-radius: 0 0.375rem 0.375rem 0;
+}
+
+.prose code {
+  background-color: #131314;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.prose pre {
+  background-color: #131314;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 1rem 0;
+  border: 1px solid #4e5052;
+}
+
+.prose pre code {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* 다크 모드에서의 표 스타일 */
+@media (prefers-color-scheme: dark) {
+  .prose th {
+    background-color: #2d3748;
+    color: #e2e8f0;
+  }
+  
+  .prose tbody tr:nth-child(even) {
+    background-color: rgba(45, 55, 72, 0.3);
+  }
+  
+  .prose tbody tr:hover {
+    background-color: rgba(66, 153, 225, 0.1);
+  }
+}
+
+/* 복사 버튼 스타일 */
+.copy-button {
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.message-container:hover .copy-button {
+  opacity: 1;
+}
+
+/* 복사 버튼이 표와 겹치지 않도록 */
+.prose {
+  margin-right: 2rem; /* 복사 버튼 공간 확보 */
+}
+
+/* 모바일에서 복사 버튼 항상 표시 */
+@media (max-width: 768px) {
+  .copy-button {
+    opacity: 1;
+  }
+  
+  .prose {
+    margin-right: 0;
+  }
+}
+
+/* ✅ 소스 뷰어 하이라이트 - 고대비(글자 선명) */
+.highlight-animation {
+  background-color: rgba(59, 130, 246, 0.10); /* tailwind blue-500 @ 10% */
+  border-color: #60a5fa; /* blue-400 */
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+/* 하이라이트 시 내부 텍스트는 어두운 색으로 강제하여 가독성 확보 */
+.highlight-animation, .highlight-animation * {
+  color: #111827 !important; /* gray-900 */
+}
+
+/* ✅ 얇은 스크롤바 스타일 */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #9ca3af #f3f4f6;
+  overflow-y: scroll !important;  /* ✅ 강제로 스크롤 표시 */
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 12px;  /* ✅ 너비를 조금 늘림 */
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: #f3f4f6;
+  border-radius: 6px;  /* ✅ 둥근 모서리 */
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background-color: #9ca3af;
+  border-radius: 6px;  /* ✅ 둥근 모서리 */
+  border: 2px solid #f3f4f6;  /* ✅ 패딩 추가 */
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #6b7280;
+}

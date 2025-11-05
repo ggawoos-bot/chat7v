@@ -1,0 +1,184 @@
+name: Firestore PDF Processing
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'public/pdf/**'  # PDF 파일 변경 시에만 실행
+  workflow_dispatch:
+    inputs:
+      forceReprocess:
+        description: '강제 재처리'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  process-pdfs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # 타임아웃 설정
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm install
+      
+    - name: Create required directories
+      run: |
+        echo "📁 필요한 디렉토리 생성 중..."
+        mkdir -p public/data
+        mkdir -p dist/data
+        echo "✅ 디렉토리 생성 완료"
+        ls -la public/
+        ls -la dist/
+      
+    - name: Verify PDF files
+      run: |
+        echo "📋 PDF 파일 확인 중..."
+        ls -la public/pdf/
+        echo "📄 PDF 파일 수: $(ls public/pdf/*.pdf | wc -l)"
+        
+        # PDF 파일 존재 확인
+        if [ ! -f "public/pdf/manifest.json" ]; then
+          echo "❌ manifest.json 파일이 없습니다."
+          exit 1
+        fi
+        
+        # PDF 파일 크기 확인
+        for pdf in public/pdf/*.pdf; do
+          if [ -f "$pdf" ]; then
+            size=$(stat -c%s "$pdf")
+            echo "📄 $(basename "$pdf"): ${size} bytes"
+            if [ $size -lt 1000 ]; then
+              echo "⚠️ 경고: $(basename "$pdf") 파일이 너무 작습니다."
+            fi
+          fi
+        done
+        
+    - name: Process PDFs to Firestore
+      run: |
+        echo "🚀 Firestore PDF 처리 시작..."
+        echo "환경변수 설정:"
+        echo "  FORCE_REPROCESS: ${{ github.event.inputs.forceReprocess || false }}"
+        
+        # Node.js 환경 설정 (PDF 파싱 최적화)
+        export NODE_OPTIONS="--max-old-space-size=4096 --no-experimental-fetch"
+        export PDF_PARSER_OPTIONS="--no-sandbox"
+        export NODE_ENV="production"
+        
+        # 환경변수 설정
+        export FORCE_REPROCESS=${{ github.event.inputs.forceReprocess || false }}
+        export GITHUB_ACTIONS=true
+        
+        # 폴리필 환경 설정
+        export NODE_POLYFILLS="dom,canvas"
+        
+        echo "🔧 Node.js 환경 설정:"
+        echo "  NODE_OPTIONS: $NODE_OPTIONS"
+        echo "  NODE_ENV: $NODE_ENV"
+        echo "  NODE_POLYFILLS: $NODE_POLYFILLS"
+        
+        # Firestore PDF 처리 스크립트 실행
+        echo "🔄 Firestore PDF 처리 시도..."
+        if node scripts/migrate-to-firestore.js; then
+          echo "✅ Firestore PDF 처리 성공!"
+        else
+          echo "❌ Firestore PDF 처리 실패!"
+          exit 1
+        fi
+        
+        echo "✅ Firestore PDF 처리 완료!"
+      env:
+        VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
+        FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
+        FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+        
+    - name: Validate Firestore data
+      run: |
+        echo "🔍 Firestore 데이터 검증 중..."
+        
+        # Firestore 연결 테스트
+        echo "🔄 Firestore 연결 테스트..."
+        if node scripts/validate-firestore-data.js; then
+          echo "✅ Firestore 데이터 검증 성공!"
+        else
+          echo "❌ Firestore 데이터 검증 실패!"
+          exit 1
+        fi
+        
+        echo "📊 Firestore 처리 결과:"
+        echo "  데이터베이스: Firestore"
+        echo "  컬렉션: pdf_documents, pdf_chunks"
+        echo "  검증: 완료"
+        
+    - name: Check for changes
+      id: changes
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "변경사항이 감지되었습니다."
+        else
+          echo "changes=false" >> $GITHUB_OUTPUT
+          echo "변경사항이 없습니다."
+        fi
+        
+    - name: Commit and push changes
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add .
+        git commit -m "Update Firestore data with PDF processing [skip ci]
+
+        - 데이터베이스: Firestore
+        - 처리 시간: $(date)
+        - 환경: GitHub Actions
+        - 품질 개선: Firestore 최적화, 실시간 검색"
+        git push
+        
+    - name: Build and deploy
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        echo "🏗️ 빌드 시작..."
+        npm run build
+        echo "✅ 빌드 완료!"
+      env:
+        VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
+        
+    - name: Setup Pages
+      if: steps.changes.outputs.changes == 'true'
+      uses: actions/configure-pages@v4
+      
+    - name: Upload artifact
+      if: steps.changes.outputs.changes == 'true'
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: ./dist
+        
+    - name: Deploy to GitHub Pages
+      if: steps.changes.outputs.changes == 'true'
+      uses: actions/deploy-pages@v4
+      
+    - name: Notify completion
+      run: |
+        echo "🎉 Firestore PDF 처리 완료!"
+        echo "📊 처리 결과:"
+        echo "  데이터베이스: Firestore"
+        echo "  컬렉션: pdf_documents, pdf_chunks"
+        echo "  변경사항: ${{ steps.changes.outputs.changes }}"
+        echo "  검색: 실시간 Firestore 검색"
+        echo "  품질: 최적화됨"

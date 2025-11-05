@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 사업문의 지원 Chatbot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'brand-bg': '#131314',
+              'brand-surface': '#1e1f20',
+              'brand-primary': '#8ab4f8',
+              'brand-secondary': '#4e5052',
+              'brand-text-primary': '#e8eaed',
+              'brand-text-secondary': '#bdc1c6',
+            }
+          }
+        }
+      }
+    </script>
+    <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.16.0",
+    "path": "https://aistudiocdn.com/path@^0.12.7",
+    "vite": "https://aistudiocdn.com/vite@^7.1.3"
+  }
+}
+</script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>
+      // Set worker source for pdf.js from CDN
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+    </script>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-brand-bg text-brand-text-primary">
+    <div id="root"></div>
+    <script>
+      // WARNING: Do not expose your API key in production.
+      // This is for demonstration purposes only.
+      window.process = {
+        env: {
+          API_KEY: 'ㅇㅇㅇ'
+        }
+      }
+    </script>
+    <script type="text/babel" data-type="module">
+      import { GoogleGenAI } from "@google/genai";
+
+      const { useState, useCallback, useMemo, useRef, useEffect, StrictMode } = React;
+
+      // --- Inlined from types.ts ---
+      const Role = {
+        USER: 'user',
+        MODEL: 'model',
+      };
+      
+      // --- Inlined from services/geminiService.ts ---
+      if (!process.env.API_KEY) {
+          throw new Error("API_KEY environment variable not set");
+      }
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const SYSTEM_INSTRUCTION_TEMPLATE = `You are an expert assistant. Your name is NotebookLM Assistant. 
+      You must answer questions based ONLY on the following source material provided. 
+      Do not use any external knowledge or your pre-trained knowledge. 
+      If the answer cannot be found in the source material, you must state that the information is not available in the provided context. 
+      Be concise, helpful, and cite which part of the source you are referring to if possible.
+
+      Here is the source material:
+      ---START OF SOURCE---
+      {sourceText}
+      ---END OF SOURCE---`;
+
+      function createNotebookChatSession(sourceText) {
+          const systemInstruction = SYSTEM_INSTRUCTION_TEMPLATE.replace('{sourceText}', sourceText);
+
+          const chat = ai.chats.create({
+              model: 'gemini-2.5-flash',
+              config: {
+                  systemInstruction: systemInstruction,
+              },
+              history: [],
+          });
+          return chat;
+      }
+
+      // --- Inlined from components/icons/UserIcon.tsx ---
+      const UserIcon = ({ className = "w-6 h-6" }) => (
+          <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+          </svg>
+      );
+
+      // --- Inlined from components/icons/BotIcon.tsx ---
+      const BotIcon = ({ className = "w-6 h-6" }) => (
+          <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19.98 10.98c0-4.96-4.02-8.98-8.98-8.98S2 6.02 2 10.98v3.03c0 .54.44.99.99.99h1.01V12h-2c0-4.41 3.59-8 8-8s8 3.59 8 8v2.01h-2v-2.01c0-.54-.44-.99-.99-.99H18v2.01h2v-2.04zM12 15c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm1.5-1.5c0-.83-.67-1.5-1.5-1.5S12 10.67 12 11.5s.67 1.5 1.5 1.5.5-.67.5-1.5z" opacity=".3" />
+              <path d="M21 12v-1.02c0-4.96-4.02-8.98-8.98-8.98S3.04 6.02 3.04 10.98V12H2v2.01h1.05v2.99c0 .54.44.99.99.99H6v-2.01H4.04v-2.99H20v2.99h-2.01V20h2.01c.54 0 .99-.44.99-.99v-2.99H22V12h-1zm-9 3c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm1.5-1.5c0-.83-.67-1.5-1.5-1.5S10.5 10.67 10.5 11.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5z" />
+          </svg>
+      );
+
+      // --- Inlined from components/icons/SendIcon.tsx ---
+      const SendIcon = ({ className = "w-6 h-6" }) => (
+          <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+          </svg>
+      );
+      
+      // --- Inlined from components/icons/DocumentIcon.tsx ---
+      const DocumentIcon = ({ className = "w-6 h-6" }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m-1.5 0-3.75 3.75m3.75-3.75V4.5m0 13.5h-3a1.5 1.5 0 0 1-1.5-1.5v-10.5a1.5 1.5 0 0 1 1.5-1.5h3.75a1.5 1.5 0 0 1 1.5 1.5v10.5a1.5 1.5 0 0 1-1.5-1.5h-3.75Z" />
+        </svg>
+      );
+
+      // --- Settings Icon ---
+      const SettingsIcon = ({ className = "w-6 h-6" }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.213-1.281Z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+        </svg>
+      );
+
+      // --- New Component: SourceInfo ---
+      const SourceInfo = ({ isLoading, files }) => (
+          <div className="flex flex-col h-full bg-brand-surface rounded-lg p-4">
+              <h2 className="text-lg font-semibold text-brand-primary mb-3">자료 출처</h2>
+              {isLoading ? (
+                  <div className="flex flex-col items-center justify-center flex-1">
+                      <div className="w-8 h-8 border-4 border-brand-primary border-t-transparent rounded-full animate-spin mb-4"></div>
+                      <p className="text-brand-text-primary">문서 목록 확인 및 로딩 중...</p>
+                      <p className="text-sm text-brand-text-secondary">자료를 준비하고 있습니다.</p>
+                  </div>
+              ) : (
+                  <div>
+                      <p className="text-sm text-brand-text-secondary mb-4">
+                          챗봇은 아래 문서들을 기반으로 답변합니다.
+                      </p>
+                      <ul className="space-y-2">
+                          {files.map((file, index) => (
+                              <li key={index} className="flex items-center gap-2 text-brand-text-secondary text-sm">
+                                  <DocumentIcon className="w-5 h-5 flex-shrink-0" />
+                                  <span>{file}</span>
+                              </li>
+                          ))}
+                      </ul>
+                  </div>
+              )}
+          </div>
+      );
+      
+      // --- Inlined from components/Message.tsx ---
+      const Message = ({ message }) => {
+          const isUser = message.role === Role.USER;
+
+          return (
+              <div className={`flex items-start gap-4 p-4 ${isUser ? '' : 'bg-brand-surface/50 rounded-lg'}`}>
+                  <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isUser ? 'bg-brand-secondary' : 'bg-brand-primary'}`}>
+                      {isUser ? <UserIcon className="w-5 h-5 text-brand-text-primary" /> : <BotIcon className="w-5 h-5 text-brand-bg" />}
+                  </div>
+                  <div className="flex-1 pt-1">
+                      <p className="font-semibold text-brand-text-primary mb-1">{isUser ? 'You' : 'Assistant'}</p>
+                      <p className="text-brand-text-secondary whitespace-pre-wrap">{message.content}</p>
+                  </div>
+              </div>
+          );
+      };
+      
+      // --- Inlined from components/MessageInput.tsx ---
+      const MessageInput = ({ currentMessage, setCurrentMessage, onSendMessage, isLoading, disabled }) => {
+          const isInputDisabled = isLoading || disabled;
+
+          return (
+              <form onSubmit={onSendMessage} className="p-4 bg-brand-surface">
+                  <div className="relative">
+                      <input
+                          type="text"
+                          value={currentMessage}
+                          onChange={(e) => setCurrentMessage(e.target.value)}
+                          placeholder={disabled ? "자료를 로딩 중입니다..." : "질문을 입력하세요..."}
+                          disabled={isInputDisabled}
+                          className="w-full bg-brand-bg border border-brand-secondary rounded-full py-3 pl-4 pr-12 text-brand-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-50"
+                      />
+                      <button
+                          type="submit"
+                          disabled={isInputDisabled || !currentMessage}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full text-brand-primary hover:bg-brand-primary/20 disabled:text-brand-secondary disabled:hover:bg-transparent transition-colors"
+                      >
+                          <SendIcon className="w-6 h-6" />
+                      </button>
+                  </div>
+              </form>
+          );
+      };
+
+      // --- Inlined from components/ChatWindow.tsx ---
+      const ChatWindow = ({ messages, isLoading, sourceProvided, isParsingDocs }) => {
+          const scrollRef = useRef(null);
+
+          useEffect(() => {
+              if (scrollRef.current) {
+                  scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+              }
+          }, [messages, isLoading]);
+
+          return (
+              <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+                   {messages.length === 0 && isParsingDocs && (
+                        <div className="text-center text-brand-text-secondary p-8 flex flex-col items-center justify-center h-full">
+                            <div className="w-8 h-8 border-4 border-brand-primary border-t-transparent rounded-full animate-spin mb-4"></div>
+                            <h3 className="text-xl font-semibold text-brand-text-primary">자료 로딩 중</h3>
+                            <p>챗봇을 시작하기 위해 문서를 준비하고 있습니다.</p>
+                        </div>
+                   )}
+                   {messages.length === 0 && !isParsingDocs && !sourceProvided && (
+                        <div className="text-center text-brand-text-secondary p-8 flex flex-col items-center justify-center h-full">
+                            <DocumentIcon className="w-12 h-12 mb-4 text-brand-secondary" />
+                            <h3 className="text-xl font-semibold text-brand-text-primary">오류 발생</h3>
+                            <p>문서 로딩에 실패했습니다. 페이지를 새로고침 해주세요.</p>
+                        </div>
+                   )}
+                   {messages.length === 0 && !isParsingDocs && sourceProvided && (
+                      <div className="text-center text-brand-text-secondary p-8 flex flex-col items-center">
+                          <BotIcon className="w-12 h-12 mb-4 text-brand-primary" />
+                          <h3 className="text-xl font-semibold text-brand-text-primary">채팅 준비 완료</h3>
+                          <p>문서가 로드되었습니다. 질문을 시작하세요.</p>
+                      </div>
+                  )}
+                  {messages.map((msg, index) => (
+                      <Message key={index} message={msg} />
+                  ))}
+                  {isLoading && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
+                       <div className="flex items-start gap-4 p-4 bg-brand-surface/50 rounded-lg">
+                          <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-brand-primary">
+                              <BotIcon className="w-5 h-5 text-brand-bg" />
+                          </div>
+                          <div className="flex-1 pt-1">
+                              <p className="font-semibold text-brand-text-primary mb-1">Assistant</p>
+                              <div className="flex items-center gap-2">
+                                  <span className="w-2 h-2 bg-brand-text-secondary rounded-full animate-pulse [animation-delay:-0.3s]"></span>
+                                  <span className="w-2 h-2 bg-brand-text-secondary rounded-full animate-pulse [animation-delay:-0.15s]"></span>
+                                  <span className="w-2 h-2 bg-brand-text-secondary rounded-full animate-pulse"></span>
+                              </div>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          );
+      };
+
+      // --- Inlined from App.tsx ---
+      const App = () => {
+          const [sourceText, setSourceText] = useState('');
+          const [messages, setMessages] = useState([]);
+          const [currentMessage, setCurrentMessage] = useState('');
+          const [isLoading, setIsLoading] = useState(false);
+          const [isParsing, setIsParsing] = useState(true);
+          const [discoveredFiles, setDiscoveredFiles] = useState([]);
+          const [error, setError] = useState(null);
+          const [loadingProgress, setLoadingProgress] = useState({
+            current: 0,
+            total: 0,
+            currentFile: '',
+            status: '시작 중...',
+            successfulFiles: [],
+            failedFiles: []
+          });
+
+          const PDF_BASE_URL = 'https://ggawoos-bot.github.io/chat7v/pdf/';
+
+          const chatSession = useMemo(() => {
+              if (sourceText.trim()) {
+                  try {
+                    return createNotebookChatSession(sourceText);
+                  } catch (e) {
+                    console.error("Error creating chat session:", e);
+                    setError(e instanceof Error ? e.message : "Failed to create chat session.");
+                    return null;
+                  }
+              }
+              return null;
+          }, [sourceText]);
+          
+          // 법령 문서인지 식별하는 함수
+          const isLegalDocument = (filename) => {
+              const legalKeywords = [
+                  '법률', '법', '시행령', '시행규칙', '규제법', '해설집'
+              ];
+              
+              return legalKeywords.some(keyword => 
+                  filename.toLowerCase().includes(keyword.toLowerCase())
+              );
+          };
+
+// 법령 조항을 추출하는 함수 (시행령/시행규칙 구분)
+const extractLegalArticles = (pageText, filename) => {
+  const articles = [];
+  
+  // 파일명에서 법령 유형 판단
+  const isEnforcementDecree = filename.includes('시행령');
+  const isEnforcementRule = filename.includes('시행규칙');
+  const isMainLaw = !isEnforcementDecree && !isEnforcementRule;
+  
+  // 법령 조항 패턴들
+  const articlePatterns = [
+    // "제1조" 형태
+    /제(\d+)조/g,
+    // "제1조제1항" 형태
+    /제(\d+)조제(\d+)항/g,
+    // "제1조제1항제1호" 형태
+    /제(\d+)조제(\d+)항제(\d+)호/g,
+    // "제1조제1항제1호가목" 형태
+    /제(\d+)조제(\d+)항제(\d+)호([가-힣])목/g,
+    // "제1조제1항제1호가목1" 형태
+    /제(\d+)조제(\d+)항제(\d+)호([가-힣])목(\d+)/g
+  ];
+  
+  // 각 패턴에 대해 매칭
+  articlePatterns.forEach(pattern => {
+    const matches = pageText.match(pattern);
+    if (matches) {
+      articles.push(...matches);
+    }
+  });
+  
+  // 법령 유형에 따라 접두사 추가
+  const prefixedArticles = articles.map(article => {
+    if (isEnforcementDecree) {
+      return `시행령 ${article}`;
+    } else if (isEnforcementRule) {
+      return `시행규칙 ${article}`;
+    } else {
+      return article; // 기본 법률은 접두사 없음
+    }
+  });
+  
+  // 중복 제거 및 정렬
+  return [...new Set(prefixedArticles)].sort((a, b) => {
+    // 숫자 순으로 정렬
+    const aNum = a.match(/\d+/g)?.map(Number) || [0];
+    const bNum = b.match(/\d+/g)?.map(Number) || [0];
+    
+    for (let i = 0; i < Math.max(aNum.length, bNum.length); i++) {
+      const aVal = aNum[i] || 0;
+      const bVal = bNum[i] || 0;
+      if (aVal !== bVal) return aVal - bVal;
+    }
+    return 0;
+  });
+};
+
+          // 실제 PDF 페이지 번호를 추출하는 함수 (개선된 버전)
+          const extractActualPageNumber = (pageText, pageIndex) => {
+              // 1. 줄바꿈을 보존하여 텍스트를 라인별로 분할
+              const lines = pageText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+              
+              // 2. 페이지 하단에서 페이지 번호 찾기 (마지막 5줄에서 검색)
+              const bottomLines = lines.slice(-5);
+              
+              for (let i = bottomLines.length - 1; i >= 0; i--) {
+                  const line = bottomLines[i];
+                  
+                  // 3. 페이지 번호 패턴들 (우선순위 순)
+                  const pageNumberPatterns = [
+                      // "69" (단독 숫자만 있는 줄)
+                      /^(\d+)$/,
+                      // "페이지 69" 형태
+                      /^페이지\s*(\d+)$/i,
+                      // "Page 69" 형태  
+                      /^Page\s*(\d+)$/i,
+                      // "69/124" 형태 (분수에서 분자만)
+                      /^(\d+)\s*\/\s*\d+$/,
+                      // "69 of 124" 형태
+                      /^(\d+)\s*of\s*\d+$/i,
+                      // "p.69" 형태
+                      /^p\.\s*(\d+)$/i,
+                      // "P.69" 형태
+                      /^P\.\s*(\d+)$/i
+                  ];
+                  
+                  // 각 패턴을 순서대로 시도
+                  for (const pattern of pageNumberPatterns) {
+                      const match = line.match(pattern);
+                      if (match && match[1]) {
+                          const pageNum = parseInt(match[1], 10);
+                          // 유효한 페이지 번호인지 확인 (1-999 범위)
+                          if (pageNum >= 1 && pageNum <= 999) {
+                              console.log(`페이지 ${pageIndex}에서 실제 페이지 번호 ${pageNum} 발견 (라인: "${line}")`);
+                              return pageNum;
+                          }
+                      }
+                  }
+              }
+              
+              // 4. 페이지 하단에서 숫자만 있는 라인 찾기
+              for (let i = bottomLines.length - 1; i >= 0; i--) {
+                  const line = bottomLines[i];
+                  // 숫자만 있는 라인인지 확인
+                  if (/^\d+$/.test(line)) {
+                      const pageNum = parseInt(line, 10);
+                      if (pageNum >= 1 && pageNum <= 999) {
+                          console.log(`페이지 ${pageIndex}에서 추정 페이지 번호 ${pageNum} 발견 (라인: "${line}")`);
+                          return pageNum;
+                      }
+                  }
+              }
+              
+              // 5. 찾지 못하면 순차 인덱스 사용 (fallback)
+              console.warn(`페이지 ${pageIndex}에서 실제 페이지 번호를 찾지 못함, 순차 인덱스 ${pageIndex} 사용`);
+              return pageIndex;
+          };
+
+          const parsePdfFromUrl = async (url) => {
+              try {
+                  const pdfData = await fetch(url).then(res => {
+                      if (!res.ok) {
+                          throw new Error(`Failed to fetch ${url}: ${res.statusText}`);
+                      }
+                      return res.arrayBuffer();
+                  });
+                  
+                  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfData) }).promise;
+                  let fullText = '';
+                  const filename = url.split('/').pop() || '';
+                  const isLegal = isLegalDocument(filename);
+                  
+                  console.log(`PDF 총 페이지 수: ${pdf.numPages}, 법령 문서: ${isLegal}`);
+                  
+                  for (let i = 1; i <= pdf.numPages; i++) {
+                      const page = await pdf.getPage(i);
+                      const textContent = await page.getTextContent();
+                      
+                      // 줄바꿈을 보존하여 텍스트 구성
+                      let pageText = '';
+                      for (let j = 0; j < textContent.items.length; j++) {
+                          const item = textContent.items[j];
+                          pageText += item.str;
+                          
+                          // 줄바꿈이 필요한 경우 추가
+                          if (item.hasEOL) {
+                              pageText += '\n';
+                          }
+                      }
+                      
+                      if (isLegal) {
+                          // 법령 문서의 경우 조항 추출 (파일명 전달)
+                          const articles = extractLegalArticles(pageText, filename);
+                          if (articles.length > 0) {
+                              // 조항이 있는 경우 조항으로 마커 생성
+                              const articleMarkers = articles.map(article => `[ARTICLE_${article}]`).join(' ');
+                              fullText += `${articleMarkers} ${pageText}\n\n`;
+                              console.log(`페이지 ${i}에서 법령 조항 발견: ${articles.join(', ')}`);
+                          } else {
+                              // 조항이 없는 경우 페이지 번호 사용
+                              const actualPageNumber = extractActualPageNumber(pageText, i);
+                              fullText += `[PAGE_${actualPageNumber}] ${pageText}\n\n`;
+                          }
+                      } else {
+                          // 일반 문서의 경우 페이지 번호 사용
+                          const actualPageNumber = extractActualPageNumber(pageText, i);
+                          fullText += `[PAGE_${actualPageNumber}] ${pageText}\n\n`;
+                      }
+                      
+                      // 디버깅을 위한 로그
+                      if (i <= 5 || i % 10 === 0) {
+                          if (isLegal) {
+                              const articles = extractLegalArticles(pageText);
+                              console.log(`PDF.js 페이지 ${i} → 법령 조항: ${articles.length > 0 ? articles.join(', ') : '없음'}`);
+                          } else {
+                              const actualPageNumber = extractActualPageNumber(pageText, i);
+                              console.log(`PDF.js 페이지 ${i} → 실제 페이지 ${actualPageNumber}`);
+                          }
+                      }
+                  }
+                  
+                  return fullText;
+              } catch (err) {
+                  console.error(`Error parsing PDF from ${url}:`, err);
+                  throw new Error(`Failed to parse ${url.split('/').pop()}: ${err.message}`);
+              }
+          };
+
+          // 에러 복구 로직과 부분 로딩을 지원하는 개선된 PDF 로딩 함수
+          const loadPdfsWithFallback = async (pdfFiles) => {
+              const results = [];
+              const failedFiles = [];
+              
+              for (let i = 0; i < pdfFiles.length; i++) {
+                  const file = pdfFiles[i];
+                  
+                  // 진행 상황 업데이트
+                  setLoadingProgress(prev => ({
+                      ...prev,
+                      current: i + 1,
+                      total: pdfFiles.length,
+                      currentFile: file,
+                      status: `${i + 1}/${pdfFiles.length} 파일 처리 중...`
+                  }));
+                  
+                  try {
+                      const text = await parsePdfFromUrl(PDF_BASE_URL + file);
+                      results.push({ success: true, text, filename: file });
+                      
+                      // 성공한 파일 목록 업데이트
+                      setLoadingProgress(prev => ({
+                          ...prev,
+                          successfulFiles: [...prev.successfulFiles, file]
+                      }));
+                      
+                      console.log(`✅ PDF 로딩 성공: ${file}`);
+                  } catch (error) {
+                      failedFiles.push({ file, error: error.message });
+                      
+                      // 실패한 파일 목록 업데이트
+                      setLoadingProgress(prev => ({
+                          ...prev,
+                          failedFiles: [...prev.failedFiles, { file, error: error.message }]
+                      }));
+                      
+                      console.warn(`⚠️ PDF 로딩 실패: ${file}`, error);
+                  }
+              }
+              
+              // 최종 상태 업데이트
+              setLoadingProgress(prev => ({
+                  ...prev,
+                  status: `완료: ${results.length}개 성공, ${failedFiles.length}개 실패`
+              }));
+              
+              if (results.length === 0) {
+                  throw new Error('모든 PDF 파일 로딩에 실패했습니다.');
+              }
+              
+              if (failedFiles.length > 0) {
+                  console.warn(`${failedFiles.length}개 파일 로딩 실패:`, failedFiles);
+              }
+              
+              return { results, failedFiles };
+          };
+
+          useEffect(() => {
+            const discoverAndParsePdfs = async () => {
+                setIsParsing(true);
+                setError(null);
+                setSourceText('');
+                setMessages([]);
+                setDiscoveredFiles([]);
+                setLoadingProgress({
+                    current: 0,
+                    total: 0,
+                    currentFile: '',
+                    status: '시작 중...',
+                    successfulFiles: [],
+                    failedFiles: []
+                });
+
+                try {
+                    // Step 1: Fetch the manifest file to discover PDF files
+                    const manifestUrl = `${PDF_BASE_URL}manifest.json`;
+                    const manifestResponse = await fetch(manifestUrl);
+                    if (!manifestResponse.ok) {
+                        throw new Error(`Could not load file list (manifest.json). Status: ${manifestResponse.statusText}`);
+                    }
+                    const pdfFiles = await manifestResponse.json();
+
+                    if (!Array.isArray(pdfFiles) || pdfFiles.length === 0) {
+                        throw new Error("No PDF files found in manifest.json or the file is invalid.");
+                    }
+                    setDiscoveredFiles(pdfFiles);
+
+                    // Step 2: Parse the discovered PDF files with error recovery
+                    const { results, failedFiles } = await loadPdfsWithFallback(pdfFiles);
+                    
+                    // 성공한 PDF들의 텍스트를 결합
+                    const successfulTexts = results.map(r => r.text);
+                    const combinedText = successfulTexts.join('\n--- END OF DOCUMENT ---\n\n--- START OF DOCUMENT ---\n');
+                    setSourceText(combinedText);
+                    
+                    // 실패한 파일이 있으면 경고 메시지 표시
+                    if (failedFiles.length > 0) {
+                        const failedFileNames = failedFiles.map(f => f.file).join(', ');
+                        setError(`일부 파일 로딩 실패: ${failedFileNames}. 사용 가능한 파일로 검색을 계속할 수 있습니다.`);
+                    }
+                    
+                } catch (err) {
+                    console.error("Error loading PDFs:", err);
+                    setError(err instanceof Error ? err.message : 'An unknown error occurred during loading.');
+                    setDiscoveredFiles([]); // Clear file list on error
+                } finally {
+                    setIsParsing(false);
+                }
+            };
+            
+            discoverAndParsePdfs();
+        }, []); // Empty dependency array ensures this runs only once on mount
+
+          const handleSendMessage = useCallback(async (e) => {
+              e.preventDefault();
+              if (!currentMessage.trim() || !chatSession || isLoading) return;
+
+              const userMessage = { role: Role.USER, content: currentMessage.trim() };
+              setMessages(prev => [...prev, userMessage]);
+              setCurrentMessage('');
+              setIsLoading(true);
+              setError(null);
+
+              try {
+                  // 답변 품질을 보장하는 질문 처리
+                  const result = await geminiService.processQuestionWithQualityGuarantee(userMessage.content);
+                  
+                  // 답변 품질에 따른 메시지 처리
+                  let responseContent = result.answer;
+                  
+                  // 답변 품질 표시 추가
+                  if (result.quality === 'guaranteed') {
+                      responseContent += '\n\n✅ **답변 품질: 100% 보장** (모든 PDF 데이터 기반)';
+                  } else if (result.quality === 'partial') {
+                      responseContent += `\n\n⚠️ **답변 품질: 부분적** (${result.loadedPDFs}/${result.totalPDFs} PDF 로드됨)`;
+                  } else if (result.quality === 'insufficient') {
+                      responseContent += '\n\n❌ **답변 품질: 불충분** (PDF 로딩 미완료)';
+                  }
+                  
+                  // AI 응답 추가
+                  const aiMessage = { role: Role.MODEL, content: responseContent };
+                  setMessages(prev => [...prev, aiMessage]);
+                  
+              } catch (err) {
+                  console.error(err);
+                  let displayMessage = '죄송합니다, 답변을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.';
+
+                  if (err instanceof Error && (err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED'))) {
+                      displayMessage = '답변 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.';
+                  }
+                  
+                  setError(displayMessage);
+                  
+                  setMessages(prev => {
+                      const newMessages = [...prev];
+                      if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === Role.MODEL) {
+                        newMessages.pop();
+                      }
+                      return [...newMessages, { role: Role.MODEL, content: displayMessage }];
+                  });
+
+              } finally {
+                  setIsLoading(false);
+              }
+          }, [chatSession, currentMessage, isLoading]);
+
+          return (
+              <div className="h-screen w-screen flex flex-col p-4 gap-4 bg-brand-bg">
+                  <header className="flex justify-between items-center">
+                      <h1 className="text-2xl font-bold text-brand-text-primary">AI 사업문의 지원</h1>
+                      <button 
+                          className="p-2 rounded-lg bg-brand-surface hover:bg-brand-secondary transition-colors"
+                          title="설정"
+                      >
+                          <SettingsIcon className="w-6 h-6 text-brand-text-primary" />
+                      </button>
+                  </header>
+                  
+                  <main className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 min-h-0">
+                      {/* Source Info Column */}
+                      <div className="flex flex-col min-h-0">
+                           <SourceInfo
+                                isLoading={isParsing}
+                                files={discoveredFiles}
+                           />
+                      </div>
+                      
+                      {/* Chat Column */}
+                      <div className="flex flex-col h-full bg-brand-surface rounded-lg min-h-0">
+                          <div className="flex-1 flex flex-col min-h-0">
+                            <h2 className="text-lg font-semibold text-brand-primary p-4 border-b border-brand-secondary">질문하기</h2>
+                              <>
+                                 {error && <div className="p-4 bg-red-900/50 text-red-300 border-b border-red-700">{error}</div>}
+                                 
+                                 {/* 로딩 진행 상황 표시 */}
+                                 {isParsing && (
+                                     <div className="p-4 bg-blue-900/50 text-blue-300 border-b border-blue-700">
+                                         <div className="flex items-center justify-between mb-2">
+                                             <span className="font-medium">{loadingProgress.status}</span>
+                                             <span className="text-sm">{loadingProgress.current}/{loadingProgress.total}</span>
+                                         </div>
+                                         
+                                         {/* 진행률 바 */}
+                                         <div className="w-full bg-gray-700 rounded-full h-2 mb-2">
+                                             <div 
+                                                 className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                                                 style={{ width: `${loadingProgress.total > 0 ? (loadingProgress.current / loadingProgress.total) * 100 : 0}%` }}
+                                             ></div>
+                                         </div>
+                                         
+                                         {/* 현재 처리 중인 파일 */}
+                                         {loadingProgress.currentFile && (
+                                             <div className="text-sm text-blue-200">
+                                                 현재 파일: {loadingProgress.currentFile}
+                                             </div>
+                                         )}
+                                         
+                                         {/* 성공/실패 파일 목록 */}
+                                         {(loadingProgress.successfulFiles.length > 0 || loadingProgress.failedFiles.length > 0) && (
+                                             <div className="mt-3 text-sm">
+                                                 {loadingProgress.successfulFiles.length > 0 && (
+                                                     <div className="text-green-300">
+                                                         ✅ 성공: {loadingProgress.successfulFiles.join(', ')}
+                                                     </div>
+                                                 )}
+                                                 {loadingProgress.failedFiles.length > 0 && (
+                                                     <div className="text-red-300">
+                                                         ❌ 실패: {loadingProgress.failedFiles.map(f => f.file).join(', ')}
+                                                     </div>
+                                                 )}
+                                             </div>
+                                         )}
+                                     </div>
+                                 )}
+                                 
+                                 {/* 답변 품질 보장 UI */}
+                                 {!isParsing && chatSession && (
+                                     <div className="mb-4 p-4 bg-brand-surface rounded-lg border border-brand-secondary">
+                                         <div className="flex items-center justify-between mb-3">
+                                             <h3 className="text-lg font-semibold text-brand-text-primary">답변 품질 보장 시스템</h3>
+                                             <div className="flex space-x-2">
+                                                 <button
+                                                     onClick={() => window.showPerformanceStats()}
+                                                     className="px-3 py-1 bg-brand-primary text-white rounded text-sm hover:bg-blue-600"
+                                                 >
+                                                     통계 보기
+                                                 </button>
+                                                 <button
+                                                     onClick={() => window.cleanupMemory()}
+                                                     className="px-3 py-1 bg-orange-600 text-white rounded text-sm hover:bg-orange-700"
+                                                 >
+                                                     메모리 정리
+                                                 </button>
+                                             </div>
+                                         </div>
+                                         
+                                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                                             <div className="bg-brand-bg p-3 rounded">
+                                                 <div className="text-brand-text-secondary mb-1">로딩 상태</div>
+                                                 <div className="text-brand-text-primary font-medium">
+                                                     {loadingProgress ? `${loadingProgress.current}/${loadingProgress.total} 완료` : 'N/A'}
+                                                 </div>
+                                             </div>
+                                             
+                                             <div className="bg-brand-bg p-3 rounded">
+                                                 <div className="text-brand-text-secondary mb-1">답변 품질</div>
+                                                 <div className="text-green-400 font-medium" id="answerQuality">
+                                                     {loadingProgress && loadingProgress.current < loadingProgress.total ? '로딩 중...' : '100% 보장'}
+                                                 </div>
+                                             </div>
+                                             
+                                             <div className="bg-brand-bg p-3 rounded">
+                                                 <div className="text-brand-text-secondary mb-1">메모리 사용량</div>
+                                                 <div className="text-brand-text-primary font-medium" id="memoryUsage">
+                                                     계산 중...
+                                                 </div>
+                                             </div>
+                                             
+                                             <div className="bg-brand-bg p-3 rounded">
+                                                 <div className="text-brand-text-secondary mb-1">캐시 상태</div>
+                                                 <div className="text-brand-text-primary font-medium" id="cacheStatus">
+                                                     확인 중...
+                                                 </div>
+                                             </div>
+                                         </div>
+                                         
+                                         {/* 답변 품질 보장 메시지 */}
+                                         {loadingProgress && loadingProgress.current < loadingProgress.total && (
+                                             <div className="mt-3 p-3 bg-yellow-900/20 border border-yellow-500/30 rounded">
+                                                 <div className="flex items-center">
+                                                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-400 mr-2"></div>
+                                                     <span className="text-yellow-300 text-sm">
+                                                         답변 품질 100% 보장을 위해 모든 PDF 로딩을 완료한 후 답변을 제공합니다.
+                                                     </span>
+                                                 </div>
+                                             </div>
+                                         )}
+                                         
+                                         {loadingProgress && loadingProgress.current >= loadingProgress.total && (
+                                             <div className="mt-3 p-3 bg-green-900/20 border border-green-500/30 rounded">
+                                                 <div className="flex items-center">
+                                                     <div className="w-4 h-4 bg-green-400 rounded-full mr-2"></div>
+                                                     <span className="text-green-300 text-sm">
+                                                         모든 PDF 로딩 완료! 답변 품질 100% 보장됩니다.
+                                                     </span>
+                                                 </div>
+                                             </div>
+                                         )}
+                                     </div>
+                                 )}
+                                 
+                                 <ChatWindow 
+                                     messages={messages} 
+                                     isLoading={isLoading} 
+                                     sourceProvided={!!chatSession}
+                                     isParsingDocs={isParsing}
+                                 />
+                                 <MessageInput
+                                      currentMessage={currentMessage}
+                                      setCurrentMessage={setCurrentMessage}
+                                      onSendMessage={handleSendMessage}
+                                      isLoading={isLoading}
+                                      disabled={!chatSession || isParsing}
+                                  />
+                              </>
+                          </div>
+                      </div>
+                  </main>
+              </div>
+          );
+      };
+
+      // --- Inlined from index.tsx ---
+      const rootElement = document.getElementById('root');
+      if (!rootElement) {
+        throw new Error("Could not find root element to mount to");
+      }
+
+      const root = ReactDOM.createRoot(rootElement);
+      root.render(
+        <StrictMode>
+          <App />
+        </StrictMode>
+      );
+
+      // 성능 모니터링 함수들
+      window.showPerformanceStats = function() {
+          const stats = geminiService.getPerformanceStats();
+          const statsText = `
+성능 통계:
+- 점진적 로딩: ${stats.isProgressiveLoadingEnabled ? '활성화' : '비활성화'}
+- 메모리 최적화: ${stats.isMemoryOptimizationEnabled ? '활성화' : '비활성화'}
+- 캐싱: ${stats.isCachingEnabled ? '활성화' : '비활성화'}
+- 로딩 진행률: ${stats.loadingProgress ? `${stats.loadingProgress.current}/${stats.loadingProgress.total}` : 'N/A'}
+- 메모리 사용량: ${stats.memoryStats ? `${(stats.memoryStats.memoryUsage / 1024 / 1024).toFixed(2)}MB` : 'N/A'}
+- 캐시 히트율: ${stats.memoryStats ? `${(stats.memoryStats.hitRate * 100).toFixed(1)}%` : 'N/A'}
+          `;
+          alert(statsText);
+      };
+
+      window.cleanupMemory = function() {
+          geminiService.cleanupMemory();
+          alert('메모리 정리가 완료되었습니다.');
+      };
+
+      window.cleanupCache = function() {
+          geminiService.cleanupCache();
+          alert('캐시 정리가 완료되었습니다.');
+      };
+
+      // 성능 통계 업데이트 함수
+      function updatePerformanceStats() {
+          const stats = geminiService.getPerformanceStats();
+          
+          // 메모리 사용량 업데이트
+          const memoryElement = document.getElementById('memoryUsage');
+          if (memoryElement && stats.memoryStats) {
+              memoryElement.textContent = `${(stats.memoryStats.memoryUsage / 1024 / 1024).toFixed(2)}MB`;
+          }
+          
+          // 캐시 상태 업데이트
+          const cacheElement = document.getElementById('cacheStatus');
+          if (cacheElement && stats.memoryStats) {
+              const hitRate = (stats.memoryStats.hitRate * 100).toFixed(1);
+              cacheElement.textContent = `히트율 ${hitRate}%`;
+          }
+      }
+
+      // 주기적으로 성능 통계 업데이트
+      setInterval(updatePerformanceStats, 5000);
+    </script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>

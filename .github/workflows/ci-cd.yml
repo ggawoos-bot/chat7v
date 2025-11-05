@@ -1,0 +1,75 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+    inputs:
+      chunkSize:
+        description: '청크 크기 (문자 수)'
+        required: true
+        default: '1000'
+        type: string
+      overlapSize:
+        description: '오버랩 크기 (문자 수)'
+        required: true
+        default: '150'
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  # 빌드 및 배포 작업 (하이브리드 방식)
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: github-pages
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm install
+      
+    - name: Create required directories
+      run: |
+        echo "📁 필요한 디렉토리 생성 중..."
+        mkdir -p public/data
+        mkdir -p dist/data
+        echo "✅ 디렉토리 생성 완료"
+        echo "ℹ️ Firestore 사용으로 JSON 파일 생성은 생략됩니다."
+      
+    - name: Build application
+      run: npm run build
+      env:
+        VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
+        VITE_GEMINI_API_KEY_1: ${{ secrets.VITE_GEMINI_API_KEY_1 }}
+        VITE_GEMINI_API_KEY_2: ${{ secrets.VITE_GEMINI_API_KEY_2 }}
+        
+    - name: Setup Pages
+      uses: actions/configure-pages@v4
+      
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: ./dist
+        
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
+      
+    - name: Deployment status
+      run: |
+        echo "🚀 배포 완료!"
+        echo "📱 사이트 URL: ${{ steps.deployment.outputs.page_url }}"

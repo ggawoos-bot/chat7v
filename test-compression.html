@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF 압축 기능 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .test-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .stat-card {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PDF 압축 기능 테스트</h1>
+        <p>이 페이지는 PDF 압축 기능을 테스트하기 위한 도구입니다.</p>
+
+        <div class="test-section">
+            <h3>1. PDF 로딩 및 압축 테스트</h3>
+            <p>PDF 파일들을 로드하고 압축 기능을 테스트합니다.</p>
+            <button onclick="testPdfCompression()" id="testBtn">PDF 압축 테스트 시작</button>
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>PDF를 로딩하고 압축 중입니다...</p>
+            </div>
+            <div class="result" id="compressionResult" style="display: none;"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>2. 압축 통계</h3>
+            <div class="stats" id="compressionStats" style="display: none;">
+                <!-- 통계 카드들이 여기에 동적으로 추가됩니다 -->
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>3. 압축 품질 검증</h3>
+            <button onclick="validateCompression()" id="validateBtn" disabled>품질 검증</button>
+            <div class="result" id="validationResult" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        let compressionResult = null;
+
+        // PDF.js 로드
+        async function loadPdfJs() {
+            if (window.pdfjsLib) return;
+            
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+            script.onload = () => {
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            };
+            document.head.appendChild(script);
+            
+            return new Promise((resolve) => {
+                script.onload = () => {
+                    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                    resolve();
+                };
+            });
+        }
+
+        // PDF 파싱 함수
+        async function parsePdfFromUrl(url) {
+            try {
+                const loadingTask = window.pdfjsLib.getDocument(url);
+                const pdf = await loadingTask.promise;
+                let fullText = '';
+
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str).join(' ');
+                    fullText += pageText + '\n';
+                }
+
+                return fullText;
+            } catch (error) {
+                console.error(`Error parsing PDF from ${url}:`, error);
+                throw error;
+            }
+        }
+
+        // PDF 압축 테스트
+        window.testPdfCompression = async function() {
+            const testBtn = document.getElementById('testBtn');
+            const loading = document.getElementById('loading');
+            const result = document.getElementById('compressionResult');
+            const stats = document.getElementById('compressionStats');
+            const validateBtn = document.getElementById('validateBtn');
+
+            testBtn.disabled = true;
+            loading.style.display = 'block';
+            result.style.display = 'none';
+            stats.style.display = 'none';
+
+            try {
+                // PDF.js 로드
+                await loadPdfJs();
+
+                // PDF 파일 목록
+                const pdfFiles = [
+                    '/chat7v/pdf/국민건강증진법률 시행령 시행규칙(202508).pdf',
+                    '/chat7v/pdf/금연구역 지정 관리 업무지침_2025개정판.pdf',
+                    '/chat7v/pdf/금연지원서비스 통합시스템 사용자매뉴얼_지역사회 통합건강증진사업 안내.pdf',
+                    '/chat7v/pdf/질서위반행위규제법 시행령(202101).pdf'
+                ];
+
+                console.log('PDF 파일들을 로딩 중...');
+                const parsingPromises = pdfFiles.map(file => parsePdfFromUrl(file));
+                const texts = await Promise.all(parsingPromises);
+                const combinedText = texts.join('\n--- END OF DOCUMENT ---\n\n--- START OF DOCUMENT ---\n');
+
+                console.log(`원본 PDF 텍스트 로드 완료: ${combinedText.length.toLocaleString()}자`);
+
+                // 간단한 압축 시뮬레이션
+                const compressed = simulateCompression(combinedText);
+                
+                compressionResult = {
+                    originalLength: combinedText.length,
+                    compressedLength: compressed.length,
+                    compressionRatio: compressed.length / combinedText.length,
+                    estimatedTokens: Math.ceil(compressed.length / 4),
+                    qualityScore: calculateQualityScore(combinedText, compressed)
+                };
+
+                // 결과 표시
+                result.textContent = `압축 완료!\n\n원본 크기: ${compressionResult.originalLength.toLocaleString()}자\n압축 후 크기: ${compressionResult.compressedLength.toLocaleString()}자\n압축률: ${(compressionResult.compressionRatio * 100).toFixed(1)}%\n예상 토큰 수: ${compressionResult.estimatedTokens.toLocaleString()}개\n품질 점수: ${compressionResult.qualityScore.toFixed(1)}점`;
+                result.style.display = 'block';
+
+                // 통계 카드 표시
+                displayStats(compressionResult);
+                stats.style.display = 'grid';
+
+                validateBtn.disabled = false;
+
+            } catch (error) {
+                result.textContent = `오류 발생: ${error.message}`;
+                result.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+                testBtn.disabled = false;
+            }
+        };
+
+        // 간단한 압축 시뮬레이션
+        function simulateCompression(text) {
+            // 1. 중복 라인 제거
+            const lines = text.split('\n');
+            const uniqueLines = [...new Set(lines)];
+            
+            // 2. 빈 라인 정리
+            const cleanedLines = uniqueLines.filter(line => line.trim().length > 0);
+            
+            // 3. 연속된 공백 정리
+            const normalizedLines = cleanedLines.map(line => 
+                line.replace(/\s+/g, ' ').trim()
+            );
+            
+            // 4. 길이 제한 (약 80만자로 제한)
+            let compressed = normalizedLines.join('\n');
+            const maxLength = 800000;
+            
+            if (compressed.length > maxLength) {
+                const chunks = splitIntoChunks(compressed, 10000);
+                const selectedChunks = chunks.slice(0, Math.floor(maxLength / 10000));
+                compressed = selectedChunks.join('\n---\n');
+            }
+            
+            return compressed;
+        }
+
+        // 청크 분할
+        function splitIntoChunks(text, chunkSize) {
+            const chunks = [];
+            for (let i = 0; i < text.length; i += chunkSize) {
+                chunks.push(text.slice(i, i + chunkSize));
+            }
+            return chunks;
+        }
+
+        // 품질 점수 계산
+        function calculateQualityScore(original, compressed) {
+            let score = 0;
+            
+            // 압축률 점수
+            const compressionRatio = compressed.length / original.length;
+            if (compressionRatio > 0.1 && compressionRatio < 0.5) {
+                score += 30;
+            } else if (compressionRatio > 0.05 && compressionRatio < 0.8) {
+                score += 20;
+            } else {
+                score += 10;
+            }
+            
+            // 키워드 보존 점수
+            const keywords = ['금연', '건강증진', '시행령', '규정', '지침', '업무'];
+            const originalKeywordCount = keywords.reduce((count, keyword) => {
+                return count + (original.match(new RegExp(keyword, 'gi')) || []).length;
+            }, 0);
+            
+            const compressedKeywordCount = keywords.reduce((count, keyword) => {
+                return count + (compressed.match(new RegExp(keyword, 'gi')) || []).length;
+            }, 0);
+            
+            if (originalKeywordCount > 0) {
+                const keywordPreservationRatio = compressedKeywordCount / originalKeywordCount;
+                score += Math.min(40, keywordPreservationRatio * 40);
+            }
+            
+            // 구조적 요소 보존 점수
+            const structuralElements = ['제', '조', '항', '목'];
+            const originalStructuralCount = structuralElements.reduce((count, element) => {
+                return count + (original.match(new RegExp(element, 'gi')) || []).length;
+            }, 0);
+            
+            const compressedStructuralCount = structuralElements.reduce((count, element) => {
+                return count + (compressed.match(new RegExp(element, 'gi')) || []).length;
+            }, 0);
+            
+            if (originalStructuralCount > 0) {
+                const structuralPreservationRatio = compressedStructuralCount / originalStructuralCount;
+                score += Math.min(30, structuralPreservationRatio * 30);
+            }
+            
+            return Math.min(100, score);
+        }
+
+        // 통계 표시
+        function displayStats(result) {
+            const statsContainer = document.getElementById('compressionStats');
+            statsContainer.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${result.originalLength.toLocaleString()}</div>
+                    <div class="stat-label">원본 크기 (자)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${result.compressedLength.toLocaleString()}</div>
+                    <div class="stat-label">압축 후 크기 (자)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${(result.compressionRatio * 100).toFixed(1)}%</div>
+                    <div class="stat-label">압축률</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${result.estimatedTokens.toLocaleString()}</div>
+                    <div class="stat-label">예상 토큰 수</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${result.qualityScore.toFixed(1)}점</div>
+                    <div class="stat-label">품질 점수</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${(result.originalLength / 4 - result.estimatedTokens).toLocaleString()}</div>
+                    <div class="stat-label">절약된 토큰</div>
+                </div>
+            `;
+        }
+
+        // 품질 검증
+        window.validateCompression = function() {
+            if (!compressionResult) {
+                alert('먼저 PDF 압축 테스트를 실행해주세요.');
+                return;
+            }
+
+            const result = document.getElementById('validationResult');
+            const warnings = [];
+            const recommendations = [];
+
+            // 토큰 수 검증
+            if (compressionResult.estimatedTokens > 200000) {
+                warnings.push(`토큰 수가 많습니다: ${compressionResult.estimatedTokens.toLocaleString()}개`);
+                recommendations.push('더 많은 청크를 제거하거나 압축률을 높이세요.');
+            }
+
+            // 압축률 검증
+            if (compressionResult.compressionRatio < 0.05) {
+                warnings.push(`압축률이 너무 높습니다: ${(compressionResult.compressionRatio * 100).toFixed(1)}%`);
+                recommendations.push('중요한 정보가 손실될 수 있습니다. 압축률을 조정하세요.');
+            }
+
+            if (compressionResult.compressionRatio > 0.8) {
+                warnings.push(`압축률이 낮습니다: ${(compressionResult.compressionRatio * 100).toFixed(1)}%`);
+                recommendations.push('더 많은 압축이 가능합니다.');
+            }
+
+            // 품질 점수 검증
+            if (compressionResult.qualityScore < 60) {
+                warnings.push(`품질 점수가 낮습니다: ${compressionResult.qualityScore.toFixed(1)}점`);
+                recommendations.push('키워드 보존을 개선하거나 압축 전략을 조정하세요.');
+            }
+
+            let validationText = '=== 압축 품질 검증 결과 ===\n\n';
+            
+            if (warnings.length === 0) {
+                validationText += '✅ 모든 검증을 통과했습니다!\n\n';
+            } else {
+                validationText += '⚠️ 경고사항:\n';
+                warnings.forEach(warning => validationText += `- ${warning}\n`);
+                validationText += '\n';
+            }
+
+            if (recommendations.length > 0) {
+                validationText += '💡 권장사항:\n';
+                recommendations.forEach(rec => validationText += `- ${rec}\n`);
+                validationText += '\n';
+            }
+
+            validationText += `📊 상세 통계:\n`;
+            validationText += `- 원본 크기: ${compressionResult.originalLength.toLocaleString()}자\n`;
+            validationText += `- 압축 후 크기: ${compressionResult.compressedLength.toLocaleString()}자\n`;
+            validationText += `- 압축률: ${(compressionResult.compressionRatio * 100).toFixed(1)}%\n`;
+            validationText += `- 예상 토큰 수: ${compressionResult.estimatedTokens.toLocaleString()}개\n`;
+            validationText += `- 품질 점수: ${compressionResult.qualityScore.toFixed(1)}점\n`;
+            validationText += `- 절약된 토큰: ${(compressionResult.originalLength / 4 - compressionResult.estimatedTokens).toLocaleString()}개`;
+
+            result.textContent = validationText;
+            result.style.display = 'block';
+        };
+    </script>
+</body>
+</html>
