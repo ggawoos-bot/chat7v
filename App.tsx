@@ -522,8 +522,12 @@ function App() {
   
   // ✅ 하이브리드 텍스트 추출 함수들
   const getCircleNumber = (num: number): string => {
-    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
-    return circleNumbers[num - 1] || '';
+    // ✅ 개선: 원형 숫자 범위 확대 (35번까지 지원)
+    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', 
+                          '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
+                          '㉑', '㉒', '㉓', '㉔', '㉕', '㉖', '㉗', '㉘', '㉙', '㉚',
+                          '㉛', '㉜', '㉝', '㉞', '㉟'];
+    return num >= 1 && num <= 35 ? circleNumbers[num - 1] : '';
   };
 
   // AI 응답에서 참조 번호 주변 문장 추출
@@ -537,14 +541,14 @@ function App() {
     let matchIndex = -1;
     let matchText = '';
     
-    // **2** 형식 찾기 (모든 매칭을 찾아서 가장 관련성 높은 것 선택)
+    // **12** 형식 찾기 (모든 매칭을 찾아서 가장 관련성 높은 것 선택)
     const boldMatches = responseText.match(boldPattern);
     if (boldMatches && boldMatches.length > 0) {
       // 여러 매칭이 있으면 가장 의미 있는 위치 선택 (첫 번째 또는 문장 시작 근처)
       matchIndex = responseText.indexOf(boldMatches[0]);
       matchText = boldMatches[0];
     } else if (circlePattern) {
-      // ② 형식 찾기
+      // ⑫ 형식 찾기
       const circleIndex = responseText.indexOf(circlePattern);
       if (circleIndex >= 0) {
         matchIndex = circleIndex;
@@ -552,11 +556,14 @@ function App() {
       }
     }
     
-    if (matchIndex < 0) return null;
+    if (matchIndex < 0) {
+      console.log(`⚠️ 참조 번호 ${referenceNumber}를 응답에서 찾지 못함`);
+      return null;
+    }
     
-    // ✅ 개선: 참조 번호 주변의 문맥 추출 범위 확대 (앞 300자 ~ 뒤 300자)
-    const start = Math.max(0, matchIndex - 300);
-    const end = Math.min(responseText.length, matchIndex + matchText.length + 300);
+    // ✅ 개선: 참조 번호 주변의 문맥 추출 범위 확대 (앞 400자 ~ 뒤 400자)
+    const start = Math.max(0, matchIndex - 400);
+    const end = Math.min(responseText.length, matchIndex + matchText.length + 400);
     const context = responseText.substring(start, end);
     
     // 문장 경계에서 자르기
@@ -567,12 +574,10 @@ function App() {
       // 참조 번호가 포함된 문장 또는 그 앞/뒤 문장
       let targetSentence = '';
       
-      // ✅ 개선: 참조 번호가 포함된 문장 찾기 로직 개선
-      if (refIndex > 0 && sentences[refIndex].includes(matchText)) {
-        // 참조 번호 앞 문장이 더 의미 있을 수 있음 (일반적으로 참조 번호는 문장 뒤에 위치)
-        targetSentence = sentences[refIndex - 1] || sentences[refIndex];
+      // ✅ 개선: 참조 번호 앞 문장 우선 (참조 번호는 보통 문장 끝에 위치)
+      if (refIndex > 0) {
+        targetSentence = sentences[refIndex - 1];
       } else if (refIndex < sentences.length - 1) {
-        // 참조 번호 뒤 문장도 확인
         const nextSentence = sentences[refIndex + 1];
         if (nextSentence && nextSentence.length >= 15) {
           targetSentence = nextSentence;
@@ -585,18 +590,20 @@ function App() {
       
       // ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
-        .replace(/\*\*\d+\*\*/g, '') // **2** 제거
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
+        .replace(/\*\*\d+\*\*/g, '') // **12** 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚㉛㉜㉝㉞㉟]/g, '') // 원형 숫자 제거 (35개까지)
         .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
         .replace(/\*\*/g, '') // ✅ 남은 ** 제거
         .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
         .trim();
       
       if (cleaned.length >= 15) {
-        return cleaned.substring(0, 60); // 최대 60자
+        console.log(`✅ 참조 번호 ${referenceNumber} 문장 추출 성공:`, cleaned.substring(0, 60));
+        return cleaned.substring(0, 100); // 최대 100자
       }
     }
     
+    console.log(`⚠️ 참조 번호 ${referenceNumber} 주변 문장을 찾지 못함`);
     return null;
   };
 
@@ -695,7 +702,28 @@ function App() {
       // ✅ 개선: 참조 문장이 있으면 PDF에서 정확한 페이지 검색
       let actualPage = page || logicalPageNumber || 1;
       
-      if (filename && referencedSentence && referencedSentence.length >= 15) {
+      // ✅ 개선: referencedSentence가 없어도 AI 응답에서 문장 추출 시도
+      let searchSentence = referencedSentence;
+      
+      // referencedSentence가 없으면 AI 응답에서 추출 시도
+      if (!searchSentence || searchSentence.length < 15) {
+        if (responseText && referenceNumber > 0) {
+          const extractedSentence = extractSentenceFromResponse(responseText, referenceNumber);
+          if (extractedSentence && extractedSentence.length >= 15) {
+            searchSentence = extractedSentence;
+            console.log('✅ AI 응답에서 문장 추출 성공:', extractedSentence.substring(0, 50));
+          }
+        }
+      }
+      
+      // 여전히 없으면 extractSearchText로 검색 문장 추출
+      if (!searchSentence || searchSentence.length < 15) {
+        searchSentence = extractSearchText(chunkContent, responseText, referenceNumber || 0, referencedSentence);
+        console.log('✅ extractSearchText로 문장 추출:', searchSentence?.substring(0, 50));
+      }
+      
+      // ✅ 개선: searchSentence가 있으면 페이지 검색 실행 (referencedSentence 조건 완화)
+      if (filename && searchSentence && searchSentence.length >= 15) {
         try {
           const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
           const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
@@ -703,12 +731,13 @@ function App() {
           const pdfUrl = `${window.location.origin}${basePath}/${encodedFilename}`;
           
           console.log('🔍 정확한 페이지 검색 시작:', {
-            referencedSentence: referencedSentence.substring(0, 50),
-            fallbackPage: actualPage
+            searchSentence: searchSentence.substring(0, 50),
+            fallbackPage: actualPage,
+            source: referencedSentence ? 'referencedSentence' : (responseText ? 'extracted' : 'extractSearchText')
           });
           
           // PDF에서 정확한 페이지 검색
-          actualPage = await findExactPageInPDF(pdfUrl, referencedSentence, actualPage);
+          actualPage = await findExactPageInPDF(pdfUrl, searchSentence, actualPage);
           
           console.log('✅ 페이지 검색 완료:', {
             originalPage: page,
@@ -719,6 +748,13 @@ function App() {
           console.warn('⚠️ 페이지 검색 실패, 기본 페이지 사용:', error);
           // 오류 시 원래 페이지 사용
         }
+      } else {
+        console.warn('⚠️ 페이지 검색을 위한 검색 문장이 없음:', {
+          hasFilename: !!filename,
+          searchSentenceLength: searchSentence?.length || 0,
+          hasReferencedSentence: !!referencedSentence,
+          hasResponseText: !!responseText
+        });
       }
       
       // PDF 파일명과 페이지 정보가 있으면 새 창에서 PDF 열기
