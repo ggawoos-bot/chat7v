@@ -888,8 +888,11 @@ Here is the source material:
       chunkReferencesCount: chunkReferences.length
     });
 
-    // 원숫자 매핑
-    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+    // ✅ 개선: 원숫자 매핑 (35개까지 지원)
+    const circleNumbers = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', 
+                           '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
+                           '㉑', '㉒', '㉓', '㉔', '㉕', '㉖', '㉗', '㉘', '㉙', '㉚',
+                           '㉛', '㉜', '㉝', '㉞', '㉟'];
     
     // 각 chunkReference에 대해 참조 문장 추출
     const updatedReferences = chunkReferences.map((chunkRef, index) => {
@@ -1002,7 +1005,7 @@ Here is the source material:
       // 5. ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
         .replace(/\*\*\d+\*\*/g, '') // **2** 제거
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '') // 원형 숫자 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚㉛㉜㉝㉞㉟]/g, '') // 원형 숫자 제거 (35개까지)
         .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
         .replace(/\*\*/g, '') // ✅ 남은 ** 제거
         .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거

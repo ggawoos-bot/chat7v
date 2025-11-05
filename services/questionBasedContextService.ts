@@ -151,9 +151,18 @@ AI 질문 분석 서비스를 사용할 수 없습니다.
 분석 기준:
 - category: definition(정의), procedure(절차), regulation(규정), comparison(비교), analysis(분석), general(일반)
 - complexity: simple(단순), medium(중간), complex(복잡)
-- keywords: 질문의 핵심을 나타내는 중요한 단어들
+- keywords: 질문의 핵심을 나타내는 중요한 단어들 (조사 제거 필수)
 - expandedKeywords: 관련 동의어, 유사어, 전문용어를 포함한 확장된 키워드 목록
 - entities: 구체적인 명사, 기관명, 법령명 등
+
+**중요 - 키워드 추출 규칙:**
+1. 조사가 붙은 단어에서 원형 단어를 추출하세요
+   - 예: "항공기에서 흡연" → keywords: ["항공기", "흡연"] (조사 "에서" 제거)
+   - 예: "공항에서 흡연하면" → keywords: ["공항", "흡연"] (조사 "에서", "하면" 제거)
+   - 예: "학교에서 금연하면" → keywords: ["학교", "금연"] (조사 제거)
+2. 일반적인 조사/보조사: 은, 는, 이, 가, 을, 를, 에, 의, 와, 과, 도, 만, 에서, 에게, 한테, 께, 로, 으로, 하면, 하면은, 하면에, 하면을 등
+3. 문장 종결어미는 키워드에서 제외: 다, 니다, 요, 어요, 아요, 세요, 지요 등
+4. 조사가 붙은 단어는 원형으로 추출하되, 조사 자체는 키워드에 포함하지 않음
 
 특별히 다음 용어들의 관련 키워드를 확장해주세요:
 - 금연: 흡연금지, 담배금지, 니코틴금지, 흡연제한, 금연구역, 금연구역
@@ -161,6 +170,8 @@ AI 질문 분석 서비스를 사용할 수 없습니다.
 - 어린이집: 보육시설, 유치원, 어린이보호시설, 보육원
 - 학교: 교육시설, 학원, 교실, 강의실
 - 병원: 의료시설, 클리닉, 의원, 보건소
+- 항공기: 비행기, 항공편, 기내, 항공, 항공기내부, 항공기내, 항공기안
+- 공항: 공항시설, 공항터미널, 공항내, 공항안, 공항시설법
 - 법령: 법규, 규정, 조항, 법률, 시행령, 시행규칙
 - 위반: 위배, 위법, 불법, 금지행위, 규정위반
 - 벌금: 과태료, 처벌, 제재, 벌칙, 과징금
@@ -179,13 +190,116 @@ AI 질문 분석 서비스를 사용할 수 없습니다.
       console.log(`🔍 응답 시작 부분:`, text.substring(0, 100));
       console.log(`🔍 응답 끝 부분:`, text.substring(Math.max(0, text.length - 100)));
       
-    return this.parseAnalysisResponse(text);
+    // ✅ 개선: originalQuestion 파라미터 전달
+    return this.parseAnalysisResponse(text, question);
+  }
+
+  /**
+   * 키워드에서 조사 제거 및 정규화 (근본적 해결)
+   */
+  private normalizeKeywords(keywords: string[]): string[] {
+    const normalized: string[] = [];
+    
+    // 한국어 조사 및 종결어미 목록 (확장)
+    const particles = [
+      // 조사
+      '은', '는', '이', '가', '을', '를', '에', '의', '와', '과', 
+      '도', '만', '조차', '마저', '까지', '부터', '에서', '에게', 
+      '한테', '께', '로', '으로', '만', '도', '라도', '이라도',
+      // 조동사/종결어미
+      '하면', '하면은', '하면에', '하면을', '하면의', '하면도', '하면만',
+      '하면서', '하면서는', '하면서도', '하면서만',
+      '하지만', '하지만은', '하지만에', '하지만을',
+      // 문장 종결어미
+      '다', '니다', '요', '어요', '아요', '세요', '지요', '네요', '어야', '어야지',
+      '야', '이야', '이야요', '인가', '인가요', '인지', '인지요'
+    ];
+    
+    keywords.forEach(keyword => {
+      if (!keyword || keyword.trim().length === 0) return;
+      
+      let cleaned = keyword.trim();
+      
+      // 조사 제거 (긴 조사부터 확인하여 우선 제거)
+      const sortedParticles = [...particles].sort((a, b) => b.length - a.length);
+      
+      for (const particle of sortedParticles) {
+        // 단어 끝에 조사가 붙어있는 경우 제거
+        if (cleaned.endsWith(particle) && cleaned.length > particle.length) {
+          cleaned = cleaned.slice(0, -particle.length);
+          break; // 한 번만 제거 (가장 긴 조사 우선)
+        }
+      }
+      
+      // 단어 시작에 조사가 붙어있는 경우 제거 (예: "에서항공기")
+      for (const particle of sortedParticles) {
+        if (cleaned.startsWith(particle) && cleaned.length > particle.length) {
+          cleaned = cleaned.slice(particle.length);
+          break;
+        }
+      }
+      
+      // 최소 2글자 이상이고, 조사가 아닌 경우만 추가
+      if (cleaned.length >= 2 && !particles.includes(cleaned)) {
+        normalized.push(cleaned);
+      }
+    });
+    
+    return normalized;
+  }
+
+  /**
+   * 질문에서 직접 키워드 추출 (AI 실패 시 폴백)
+   */
+  private extractKeywordsFromQuestion(question: string): string[] {
+    const keywords: string[] = [];
+    
+    // 한국어 조사 및 불용어
+    const particles = [
+      '은', '는', '이', '가', '을', '를', '에', '의', '와', '과',
+      '도', '만', '조차', '마저', '까지', '부터', '에서', '에게',
+      '한테', '께', '로', '으로', '하면', '하지만', '하다', '되다',
+      '것', '수', '있', '없', '등', '때', '경우', '위해', '때문'
+    ];
+    
+    // 1. 연속된 한글 단어 추출 (2-15글자)
+    const koreanWords = question.match(/[가-힣]{2,15}/g) || [];
+    
+    koreanWords.forEach(word => {
+      let cleaned = word;
+      
+      // 조사 제거 (긴 조사부터)
+      const sortedParticles = [...particles].sort((a, b) => b.length - a.length);
+      
+      for (const particle of sortedParticles) {
+        if (cleaned.endsWith(particle) && cleaned.length > particle.length) {
+          cleaned = cleaned.slice(0, -particle.length);
+          break;
+        }
+      }
+      
+      // 최소 2글자 이상이고, 조사가 아닌 경우만 추가
+      if (cleaned.length >= 2 && !particles.includes(cleaned) && !keywords.includes(cleaned)) {
+        keywords.push(cleaned);
+      }
+    });
+    
+    // 2. 영어 단어 추출 (3글자 이상)
+    const englishWords = question.match(/[A-Za-z]{3,}/g) || [];
+    englishWords.forEach(word => {
+      const lowerWord = word.toLowerCase();
+      if (!particles.includes(lowerWord) && !keywords.includes(lowerWord)) {
+        keywords.push(lowerWord);
+      }
+    });
+    
+    return keywords;
   }
 
   /**
    * AI 응답 파싱 (강화된 에러 처리)
    */
-  private parseAnalysisResponse(responseText: string): QuestionAnalysis {
+  private parseAnalysisResponse(responseText: string, originalQuestion?: string): QuestionAnalysis {
     try {
       console.log(`🔍 JSON 파싱 시작: ${responseText.length}자`);
       
@@ -202,25 +316,53 @@ AI 질문 분석 서비스를 사용할 수 없습니다.
       
       console.log(`✅ JSON 파싱 성공:`, analysis);
       
-      // 확장된 키워드와 기본 키워드 병합
-      const allKeywords = [
+      // 3. AI가 반환한 키워드 정규화 (조사 제거)
+      const aiKeywords = [
         ...(analysis.keywords || []),
         ...(analysis.expandedKeywords || [])
       ];
       
-      // 중복 제거
-      const uniqueKeywords = [...new Set(allKeywords)];
+      const normalizedKeywords = this.normalizeKeywords(aiKeywords);
+      console.log(`🔍 AI 키워드 정규화 후 (${normalizedKeywords.length}개):`, normalizedKeywords);
+      
+      // 4. 질문에서 직접 키워드 추출 (AI 실패 시 폴백)
+      let directKeywords: string[] = [];
+      if (originalQuestion) {
+        directKeywords = this.extractKeywordsFromQuestion(originalQuestion);
+        console.log(`🔍 질문에서 직접 추출한 키워드 (${directKeywords.length}개):`, directKeywords);
+      }
+      
+      // 5. AI 키워드와 직접 추출 키워드 병합
+      const allKeywords = [...new Set([...normalizedKeywords, ...directKeywords])];
+      
+      console.log(`✅ 최종 키워드 (${allKeywords.length}개):`, allKeywords);
 
-        return {
+      return {
         intent: analysis.intent || '일반 문의',
-        keywords: uniqueKeywords,
+        keywords: allKeywords,
         category: (analysis.category as QuestionAnalysis['category']) || 'general',
         complexity: (analysis.complexity as QuestionAnalysis['complexity']) || 'simple',
-          entities: analysis.entities || [],
-          context: analysis.context || ''
-        };
+        entities: analysis.entities || [],
+        context: analysis.context || ''
+      };
     } catch (error) {
       console.error('❌ AI 응답 파싱 실패:', error);
+      
+      // AI 파싱 실패 시 질문에서 직접 키워드 추출
+      if (originalQuestion) {
+        console.log('⚠️ AI 파싱 실패, 질문에서 직접 키워드 추출');
+        const directKeywords = this.extractKeywordsFromQuestion(originalQuestion);
+        
+        return {
+          intent: '일반 문의',
+          keywords: directKeywords,
+          category: 'general',
+          complexity: 'simple',
+          entities: [],
+          context: originalQuestion
+        };
+      }
+      
       console.error('❌ 원본 응답:', responseText);
       console.error('❌ 정제된 응답:', responseText.replace(/```json\s*/g, '').replace(/```\s*$/g, '').trim());
       throw new Error('AI 응답을 파싱할 수 없습니다: ' + (error instanceof Error ? error.message : '알 수 없는 오류'));
