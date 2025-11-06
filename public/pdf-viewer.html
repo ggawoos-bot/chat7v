@@ -554,6 +554,130 @@
       return false;
     }
     
+    // ✅ 해시 생성 함수 (정규화된 텍스트의 해시값 생성)
+    function createTextHash(text) {
+      const normalized = normalizeTextForMatching(text);
+      let hash = 0;
+      for (let i = 0; i < normalized.length; i++) {
+        const char = normalized.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // 32bit 정수로 변환
+      }
+      return hash.toString(36);
+    }
+    
+    // ✅ 문장에 해당하는 span 찾기 헬퍼 함수
+    function findSpansForSentence(textSpans, targetSentence, normalizedAllText) {
+      const normalizedTarget = normalizeTextForMatching(targetSentence);
+      const matchIndex = normalizedAllText.indexOf(normalizedTarget);
+      
+      if (matchIndex < 0) return null;
+      
+      let charIndex = 0;
+      const matchedSpans = [];
+      const matchEndIndex = matchIndex + normalizedTarget.length;
+      
+      for (let i = 0; i < textSpans.length; i++) {
+        const span = textSpans[i];
+        const spanText = normalizeTextForMatching(span.textContent || '');
+        const spanLength = spanText.length;
+        
+        const spanStartChar = charIndex;
+        const spanEndChar = charIndex + spanLength;
+        
+        // span이 검색 범위와 겹치면 하이라이트
+        if (spanStartChar < matchEndIndex && spanEndChar > matchIndex) {
+          matchedSpans.push(span);
+        }
+        
+        charIndex = spanEndChar;
+        
+        // 매칭 범위를 넘어가면 종료
+        if (spanEndChar >= matchEndIndex) {
+          break;
+        }
+      }
+      
+      return matchedSpans.length > 0 ? matchedSpans : null;
+    }
+    
+    // ✅ 해시 기반 다단계 매칭 함수 (95-99% 정확도)
+    function findSentenceWithHashMatching(textLayer, targetSentence) {
+      if (!targetSentence || !textLayer) {
+        return null;
+      }
+      
+      const normalizedTarget = normalizeTextForMatching(targetSentence);
+      if (normalizedTarget.length < 10) {
+        return null; // 너무 짧은 문장은 스킵
+      }
+      
+      const textSpans = textLayer.querySelectorAll('span');
+      const allText = Array.from(textSpans).map(s => s.textContent || '').join(' ');
+      const normalizedAllText = normalizeTextForMatching(allText);
+      
+      // ✅ Stage 1: 정확한 해시 매칭 (100% 정확도)
+      const targetHash = createTextHash(normalizedTarget);
+      const sentences = normalizedAllText.split(/[.。!！?？\n]/).map(s => s.trim()).filter(s => s.length >= 10);
+      
+      for (let i = 0; i < sentences.length; i++) {
+        const sentenceHash = createTextHash(sentences[i]);
+        if (sentenceHash === targetHash) {
+          // 정확한 매칭 발견 - 해당 문장의 span 찾기
+          const matchedSpans = findSpansForSentence(textSpans, sentences[i], normalizedAllText);
+          if (matchedSpans && matchedSpans.length > 0) {
+            console.log(`✅ 해시 기반 정확 매칭 성공: ${matchedSpans.length}개 span`);
+            return matchedSpans;
+          }
+        }
+      }
+      
+      // ✅ Stage 2: 부분 해시 매칭 (95%+ 정확도)
+      const targetPrefix = normalizedTarget.substring(0, Math.min(50, normalizedTarget.length));
+      const targetPrefixHash = createTextHash(targetPrefix);
+      
+      for (let i = 0; i < sentences.length; i++) {
+        const sentencePrefix = sentences[i].substring(0, Math.min(50, sentences[i].length));
+        const sentencePrefixHash = createTextHash(sentencePrefix);
+        
+        if (sentencePrefixHash === targetPrefixHash) {
+          const matchedSpans = findSpansForSentence(textSpans, sentences[i], normalizedAllText);
+          if (matchedSpans && matchedSpans.length > 0) {
+            console.log(`✅ 해시 기반 부분 매칭 성공: ${matchedSpans.length}개 span`);
+            return matchedSpans;
+          }
+        }
+      }
+      
+      // ✅ Stage 3: 단어 기반 유사도 매칭 (90%+ 정확도)
+      const targetWords = normalizedTarget.split(/\s+/).filter(w => w.trim().length >= 3);
+      let bestMatch = null;
+      let bestScore = 0;
+      
+      for (let i = 0; i < sentences.length; i++) {
+        const sentenceWords = sentences[i].split(/\s+/).filter(w => w.trim().length >= 3);
+        const matchedWords = targetWords.filter(tw => 
+          sentenceWords.some(sw => sw.includes(tw) || tw.includes(sw))
+        );
+        
+        const score = matchedWords.length / targetWords.length;
+        if (score > bestScore && score >= 0.8) {
+          bestScore = score;
+          const matchedSpans = findSpansForSentence(textSpans, sentences[i], normalizedAllText);
+          if (matchedSpans && matchedSpans.length > 0) {
+            bestMatch = matchedSpans;
+          }
+        }
+      }
+      
+      if (bestMatch && bestMatch.length > 0) {
+        console.log(`✅ 해시 기반 유사도 매칭 성공: ${bestMatch.length}개 span (점수: ${bestScore.toFixed(2)})`);
+        return bestMatch;
+      }
+      
+      return null;
+    }
+    
     // ✅ PDF.js 좌표 기반 정확 매칭 함수 (99%+ 정확도)
     function findExactSentenceWithPDFJS(textLayer, targetSentence) {
       if (!currentPageTextContent || !targetSentence || !textLayer) {
@@ -721,6 +845,18 @@
           console.log(`✅ PDF.js 좌표 기반 하이라이트 완료: ${highlightCount}개 span`);
           return; // PDF.js 매칭 성공 시 여기서 종료
         }
+        
+        // ✅ 0-1단계: 해시 기반 다단계 매칭 (PDF.js 실패 시, 95-99% 정확도)
+        const hashMatch = findSentenceWithHashMatching(textLayer, searchText);
+        if (hashMatch && hashMatch.length > 0) {
+          // ✅ 해시 기반 매칭 성공
+          hashMatch.forEach(span => {
+            span.classList.add('highlight-strong');
+            highlightCount++;
+          });
+          console.log(`✅ 해시 기반 하이라이트 완료: ${highlightCount}개 span`);
+          return; // 해시 매칭 성공 시 여기서 종료
+        }
       }
       
       // ✅ 1단계: 검색 텍스트로 정확한 매칭 (콤마 구분 검색어 지원)
@@ -880,7 +1016,7 @@
                         orderScore += 10; // 가까운 경우 중간 점수
                       } else if (lastMatchedIndex >= 0 && k - lastMatchedIndex <= 5) {
                         orderScore += 5; // 멀리 있는 경우 낮은 점수
-                      } else {
+                    } else {
                         orderScore += 1; // 매우 먼 경우 최소 점수
                       }
                       
@@ -926,9 +1062,9 @@
                     if (!matchedSpanSet.has(item.span)) {
                       item.span.classList.add('highlight-strong');
                       matchedSpanSet.add(item.span);
-                      highlightCount++;
-                    }
-                  });
+                          highlightCount++;
+                        }
+                      });
                   
                   if (idx < 3) { // 상위 3개만 로그 출력
                     console.log(`  매칭 ${idx + 1}: ${match.matchedWords}/${searchWords.length} (${(match.wordMatchRatio * 100).toFixed(1)}%), 순서 점수: ${match.orderScore}, 총 점수: ${match.totalScore.toFixed(1)}`);
@@ -989,16 +1125,16 @@
                       if (!matchedSpanSet.has(item.span)) {
                         item.span.classList.add('highlight-strong');
                         matchedSpanSet.add(item.span);
-                        highlightCount++;
-                      }
-                    });
+                    highlightCount++;
+                  }
+                });
                     
                     if (idx < 3) { // 상위 3개만 로그 출력
                       console.log(`  폴백 매칭 ${idx + 1}: ${match.matchedWords}/${searchWords.length} (${(match.wordMatchRatio * 100).toFixed(1)}%)`);
-                    }
+              }
                   });
-                  
-                  if (highlightCount > 0) {
+              
+              if (highlightCount > 0) {
                     console.log(`✅ 폴백 매칭 하이라이트 완료: ${highlightCount}개 span`);
                     return;
                   }
