@@ -290,7 +290,7 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
     return null;
   };
 
-  // ✅ 툴팁용 하이라이트 (키워드 + 가장 유사한 문장 강조)
+  // ✅ 툴팁용 하이라이트 (키워드 + 가장 유사한 문장 강조) - 개선된 버전
   const highlightForTooltip = (
     chunkContent: string, 
     keywords?: string[], 
@@ -298,10 +298,7 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
     referenceNumber?: number,
     referencedSentence?: string // ✅ AI가 실제로 인용한 문장
   ): string => {
-    // 1단계: 키워드 하이라이트
-    let highlighted = highlightKeywords(chunkContent, keywords);
-    
-    // 2단계: 참조 문장 결정 (우선순위: referencedSentence > AI 응답에서 추출)
+    // ✅ 1단계: 참조 문장 결정 (우선순위: referencedSentence > AI 응답에서 추출)
     let targetSentence: string | null = null;
     
     // ✅ 1순위: referencedSentence 사용 (AI가 실제로 인용한 문장)
@@ -314,63 +311,87 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
       console.log('✅ 툴팁: AI 응답에서 문장 추출:', targetSentence ? targetSentence.substring(0, 60) : null);
     }
     
-    // 3단계: 가장 유사한 문장 찾기 및 강조
+    // ✅ 2단계: 유사한 문장 찾기 및 핵심 단어 추출 (키워드 하이라이트 전에 적용)
+    let highlighted = chunkContent;
+    
     if (targetSentence) {
       const similarSentence = findMostSimilarSentence(chunkContent, targetSentence);
       
       if (similarSentence && similarSentence.length >= 15) {
-        // 유사한 문장을 진하게 표시 (다른 색상)
-        // 정규화된 매칭 (줄바꿈, 공백 정리)
-        const normalizeForMatch = (text: string) => 
+        // ✅ 개선: 텍스트 정규화 함수
+        const normalizeText = (text: string) => 
           text.replace(/\s+/g, ' ').replace(/[\n\r\t]/g, ' ').trim();
         
-        const normalizedSimilar = normalizeForMatch(similarSentence);
-        const normalizedChunk = normalizeForMatch(chunkContent);
+        const normalizedSimilar = normalizeText(similarSentence);
         
-        // 정규화된 텍스트에서 매칭 시도
-        const matchIndex = normalizedChunk.indexOf(normalizedSimilar);
+        // ✅ 핵심 단어 추출 (3자 이상, 조사 제외)
+        const stopWords = ['은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '만', '로', '으로', '및', '등'];
+        const keyWords = normalizedSimilar
+          .split(/\s+/)
+          .filter(w => {
+            const trimmed = w.trim();
+            return trimmed.length >= 3 && !stopWords.includes(trimmed);
+          })
+          .slice(0, 10); // 최대 10개 단어
         
-        if (matchIndex >= 0) {
-          // 원본 텍스트에서 해당 부분 찾기 (정규화 전 위치 근사)
-          const escaped = similarSentence
-            .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-            .substring(0, 200); // 최대 200자까지
-        
-          if (escaped.length >= 15) {
-            // 부분 매칭 허용 (더 유연한 정규식)
-            const partialEscaped = escaped.substring(0, Math.min(100, escaped.length));
-            const regex = new RegExp(`(${partialEscaped.replace(/\s+/g, '\\s+')})`, 'gi');
+        if (keyWords.length > 0) {
+          console.log('✅ 툴팁: 핵심 단어 추출:', keyWords.slice(0, 5));
+          
+          // ✅ 각 단어를 개별적으로 하이라이트 (원본 텍스트에서 직접 적용)
+          // 순서: 긴 단어부터 적용 (긴 단어가 짧은 단어를 포함하는 경우 방지)
+          const sortedWords = [...keyWords].sort((a, b) => b.length - a.length);
+          
+          sortedWords.forEach(word => {
+            const trimmedWord = word.trim();
+            if (trimmedWord.length < 3) return;
             
-            highlighted = highlighted.replace(regex, (match) => {
-              // 이미 하이라이트된 부분은 제외
-              if (match.includes('<mark') || match.includes('<span')) {
+            // 특수문자 이스케이프
+            const escapedWord = trimmedWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            
+            // ✅ 단어 단위 매칭 (더 유연하게 - 단어 경계 고려)
+            // 한글의 경우 단어 경계가 명확하지 않으므로 직접 포함 체크
+            const regex = new RegExp(`(${escapedWord})`, 'gi');
+            
+            highlighted = highlighted.replace(regex, (match, wordMatch, offset) => {
+              // ✅ 이미 하이라이트된 부분은 제외 (HTML 태그 체크)
+              const beforeMatch = highlighted.substring(Math.max(0, offset - 20), offset);
+              const afterMatch = highlighted.substring(offset, Math.min(highlighted.length, offset + match.length + 20));
+              
+              // 이미 하이라이트 태그 안에 있으면 제외
+              if (beforeMatch.includes('<mark') || beforeMatch.includes('<span class="bg-blue')) {
+                // 닫는 태그가 매칭 뒤에 있는지 확인
+                const tagMatch = beforeMatch.match(/<[^>]+>([^<]*)$/);
+                if (tagMatch) {
+                  const remainingText = tagMatch[1];
+                  if (remainingText.length < match.length) {
+                    // 아직 태그 안에 있음
+                    return match;
+                  }
+                }
+              }
+              
+              // 이미 파란색 하이라이트가 있으면 제외 (중복 방지)
+              if (beforeMatch.includes('bg-blue-100') || afterMatch.includes('bg-blue-100')) {
                 return match;
               }
-              // 강조 표시 (진하게 + 파란색 배경)
+              
+              // ✅ 유사한 문장의 단어 강조 (파란색 배경, 진하게)
               return `<span class="bg-blue-100 font-bold text-blue-900 px-1 rounded">${match}</span>`;
             });
-            
-            console.log('✅ 툴팁: 문장 강조 완료:', similarSentence.substring(0, 60));
-          }
+          });
+          
+          console.log('✅ 툴팁: 핵심 단어 하이라이트 완료');
         } else {
-          // 정규화된 매칭 실패 시 부분 매칭 시도
-          const partialMatch = normalizedSimilar.substring(0, Math.min(50, normalizedSimilar.length));
-          if (normalizedChunk.includes(partialMatch)) {
-            const escaped = partialMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`(${escaped.replace(/\s+/g, '\\s+')})`, 'gi');
-            
-            highlighted = highlighted.replace(regex, (match) => {
-              if (match.includes('<mark') || match.includes('<span')) {
-                return match;
-              }
-              return `<span class="bg-blue-100 font-bold text-blue-900 px-1 rounded">${match}</span>`;
-            });
-            
-            console.log('✅ 툴팁: 부분 매칭으로 문장 강조 완료');
-          }
+          console.log('⚠️ 툴팁: 핵심 단어를 추출할 수 없습니다.');
         }
+      } else {
+        console.log('⚠️ 툴팁: 유사한 문장을 찾을 수 없습니다.');
       }
     }
+    
+    // ✅ 3단계: 키워드 하이라이트 (유사한 문장 하이라이트 후 적용)
+    // 이제 highlighted에는 이미 파란색 하이라이트가 있으므로, 키워드 하이라이트는 노란색으로 적용
+    highlighted = highlightKeywords(highlighted, keywords);
     
     return highlighted;
   };
