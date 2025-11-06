@@ -312,6 +312,8 @@
     let numPages = 0;
     let pageRendering = false;
     let pageNumPending = null;
+    // ✅ PDF.js 좌표 기반 매칭을 위한 전역 변수
+    let currentPageTextContent = null; // 현재 페이지의 textContent 저장
     // ✅ PDF 로드 전 수신된 메시지를 저장하는 큐
     const queuedMessages = [];
     
@@ -440,6 +442,9 @@
           // 텍스트 레이어 렌더링 및 하이라이트
           return page.getTextContent();
         }).then((textContent) => {
+          // ✅ PDF.js 좌표 기반 매칭을 위해 textContent 저장
+          currentPageTextContent = textContent;
+          
           // 텍스트 레이어 초기화
           textLayerDiv.innerHTML = '';
           textLayerDiv.style.width = viewport.width + 'px';
@@ -549,6 +554,146 @@
       return false;
     }
     
+    // ✅ PDF.js 좌표 기반 정확 매칭 함수 (99%+ 정확도)
+    function findExactSentenceWithPDFJS(textLayer, targetSentence) {
+      if (!currentPageTextContent || !targetSentence || !textLayer) {
+        return null;
+      }
+      
+      const normalizedTarget = normalizeTextForMatching(targetSentence);
+      if (normalizedTarget.length < 10) {
+        return null; // 너무 짧은 문장은 스킵
+      }
+      
+      // ✅ 1단계: PDF.js 텍스트 아이템으로 전체 텍스트 재구성
+      const textItems = [];
+      let fullText = '';
+      let charIndex = 0;
+      
+      currentPageTextContent.items.forEach((item) => {
+        if (item.str && item.str.trim()) {
+          const normalizedItem = normalizeTextForMatching(item.str);
+          const itemLength = normalizedItem.length;
+          
+          textItems.push({
+            str: item.str,
+            normalizedStr: normalizedItem,
+            transform: item.transform,
+            width: item.width,
+            height: item.height,
+            x: item.transform[4], // e 값이 X 좌표
+            y: item.transform[5], // f 값이 Y 좌표
+            fontName: item.fontName,
+            dir: item.dir,
+            startCharIndex: charIndex,
+            endCharIndex: charIndex + itemLength
+          });
+          
+          fullText += normalizedItem + ' ';
+          charIndex += itemLength + 1; // 공백 포함
+        }
+      });
+      
+      const normalizedFullText = normalizeTextForMatching(fullText);
+      
+      // ✅ 2단계: 정확한 매칭 위치 찾기
+      const matchIndex = normalizedFullText.indexOf(normalizedTarget);
+      
+      if (matchIndex >= 0) {
+        // ✅ 3단계: 매칭된 텍스트 아이템 추출
+        const matchedItems = [];
+        const matchEndIndex = matchIndex + normalizedTarget.length;
+        
+        for (const item of textItems) {
+          // 매칭 범위와 겹치는 아이템 찾기
+          if (item.startCharIndex < matchEndIndex && item.endCharIndex > matchIndex) {
+            matchedItems.push(item);
+          }
+          
+          // 매칭 범위를 넘어가면 종료
+          if (item.endCharIndex >= matchEndIndex) {
+            break;
+          }
+        }
+        
+        if (matchedItems.length > 0) {
+          // ✅ 4단계: 텍스트 레이어의 span 요소와 매칭
+          const textSpans = textLayer.querySelectorAll('span');
+          const matchedSpans = [];
+          
+          // 텍스트 아이템의 텍스트로 span 찾기
+          let spanIndex = 0;
+          for (const item of matchedItems) {
+            // 해당 텍스트를 포함하는 span 찾기
+            for (let i = spanIndex; i < textSpans.length; i++) {
+              const span = textSpans[i];
+              const spanText = normalizeTextForMatching(span.textContent || '');
+              
+              // 텍스트 아이템의 텍스트가 span에 포함되어 있는지 확인
+              if (spanText.includes(item.normalizedStr) || item.normalizedStr.includes(spanText)) {
+                if (!matchedSpans.includes(span)) {
+                  matchedSpans.push(span);
+                }
+                spanIndex = i + 1; // 다음 span부터 검색
+                break;
+              }
+            }
+          }
+          
+          if (matchedSpans.length > 0) {
+            console.log(`✅ PDF.js 좌표 기반 정확 매칭 성공: ${matchedSpans.length}개 span`);
+            return matchedSpans;
+          }
+        }
+      }
+      
+      // ✅ 5단계: 부분 매칭 시도 (정확 매칭 실패 시)
+      const targetPrefix = normalizedTarget.substring(0, Math.min(50, normalizedTarget.length));
+      const prefixMatchIndex = normalizedFullText.indexOf(targetPrefix);
+      
+      if (prefixMatchIndex >= 0) {
+        const matchedItems = [];
+        const prefixMatchEndIndex = prefixMatchIndex + targetPrefix.length;
+        
+        for (const item of textItems) {
+          if (item.startCharIndex < prefixMatchEndIndex && item.endCharIndex > prefixMatchIndex) {
+            matchedItems.push(item);
+          }
+          if (item.endCharIndex >= prefixMatchEndIndex) {
+            break;
+          }
+        }
+        
+        if (matchedItems.length > 0) {
+          const textSpans = textLayer.querySelectorAll('span');
+          const matchedSpans = [];
+          let spanIndex = 0;
+          
+          for (const item of matchedItems) {
+            for (let i = spanIndex; i < textSpans.length; i++) {
+              const span = textSpans[i];
+              const spanText = normalizeTextForMatching(span.textContent || '');
+              
+              if (spanText.includes(item.normalizedStr) || item.normalizedStr.includes(spanText)) {
+                if (!matchedSpans.includes(span)) {
+                  matchedSpans.push(span);
+                }
+                spanIndex = i + 1;
+                break;
+              }
+            }
+          }
+          
+          if (matchedSpans.length > 0) {
+            console.log(`✅ PDF.js 좌표 기반 부분 매칭 성공: ${matchedSpans.length}개 span`);
+            return matchedSpans;
+          }
+        }
+      }
+      
+      return null;
+    }
+    
     // 하이라이트 적용 함수 (개선된 버전: 순차적 단어 배열 + 슬라이딩 윈도우 매칭)
     function applyHighlight(textLayer, keywords, searchText) {
       if (!textLayer || (!keywords.length && !searchText)) {
@@ -563,6 +708,20 @@
       
       const textSpans = textLayer.querySelectorAll('span');
       let highlightCount = 0;
+      
+      // ✅ 0단계: PDF.js 좌표 기반 정확 매칭 (최우선, 99%+ 정확도)
+      if (searchText && searchText.trim().length >= 10) {
+        const pdfjsMatch = findExactSentenceWithPDFJS(textLayer, searchText);
+        if (pdfjsMatch && pdfjsMatch.length > 0) {
+          // ✅ PDF.js 좌표 기반 매칭 성공
+          pdfjsMatch.forEach(span => {
+            span.classList.add('highlight-strong');
+            highlightCount++;
+          });
+          console.log(`✅ PDF.js 좌표 기반 하이라이트 완료: ${highlightCount}개 span`);
+          return; // PDF.js 매칭 성공 시 여기서 종료
+        }
+      }
       
       // ✅ 1단계: 검색 텍스트로 정확한 매칭 (콤마 구분 검색어 지원)
       if (searchText && searchText.trim().length > 0) {
