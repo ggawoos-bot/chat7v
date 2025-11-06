@@ -681,11 +681,10 @@
               
               console.log(`📋 span 배열 완료: ${spanWordArray.length}개 span, 총 ${spanWordArray.reduce((sum, item) => sum + item.words.length, 0)}개 단어`);
               
-              // ✅ 개선 3: 단어 순서를 고려한 매칭 (점수 기반)
+              // ✅ 개선 3: 단어 순서를 고려한 매칭 (점수 기반) - 모든 유효한 매칭 하이라이트
               const windowSize = Math.max(3, Math.ceil(searchWords.length * 2));
               const matchedSpanSet = new Set();
-              let bestMatch = null;
-              let bestScore = 0;
+              const validMatches = []; // 모든 유효한 매칭 저장
               
               for (let i = 0; i <= spanWordArray.length - windowSize; i++) {
                 const windowSpans = spanWordArray.slice(i, i + windowSize);
@@ -741,31 +740,39 @@
                 // 총 점수 = 매칭 비율 점수 + 순서 점수
                 const totalScore = (wordMatchRatio * 100) + orderScore;
                 
-                // ✅ 개선 4: 점수 기반 매칭 (순서 고려)
-                if (matchedWords >= 4 || wordMatchRatio >= 0.5 || totalScore >= 60) {
-                  if (totalScore > bestScore) {
-                    bestScore = totalScore;
-                    bestMatch = { 
-                      windowSpans, 
-                      matchedWords, 
-                      wordMatchRatio, 
-                      totalScore,
-                      orderScore,
-                      matchedWordSet
-                    };
-                  }
+                // ✅ 개선 4: 조건 완화하여 더 많은 매칭 포착 (30% 이상 또는 2개 이상 단어 매칭)
+                if (matchedWords >= 2 || wordMatchRatio >= 0.3 || totalScore >= 40) {
+                  validMatches.push({ 
+                    windowSpans, 
+                    matchedWords, 
+                    wordMatchRatio, 
+                    totalScore,
+                    orderScore,
+                    matchedWordSet,
+                    startIndex: i
+                  });
                 }
               }
               
-              // ✅ 개선 5: 최고 점수 매칭만 하이라이트 (중복 방지 및 정확도 향상)
-              if (bestMatch) {
-                console.log(`✅ 최고 점수 매칭: ${bestMatch.matchedWords}/${searchWords.length} (${(bestMatch.wordMatchRatio * 100).toFixed(1)}%), 순서 점수: ${bestMatch.orderScore}, 총 점수: ${bestMatch.totalScore.toFixed(1)}`);
+              // ✅ 개선 5: 모든 유효한 매칭을 하이라이트 (중복 방지)
+              if (validMatches.length > 0) {
+                // 점수 순으로 정렬 (높은 점수부터)
+                validMatches.sort((a, b) => b.totalScore - a.totalScore);
                 
-                bestMatch.windowSpans.forEach(item => {
-                  if (!matchedSpanSet.has(item.span)) {
-                    item.span.classList.add('highlight-strong');
-                    matchedSpanSet.add(item.span);
-                    highlightCount++;
+                console.log(`✅ 유효한 매칭 발견: ${validMatches.length}개`);
+                
+                // 모든 유효한 매칭을 하이라이트 (중복 span은 제외)
+                validMatches.forEach((match, idx) => {
+                  match.windowSpans.forEach(item => {
+                    if (!matchedSpanSet.has(item.span)) {
+                      item.span.classList.add('highlight-strong');
+                      matchedSpanSet.add(item.span);
+                      highlightCount++;
+                    }
+                  });
+                  
+                  if (idx < 3) { // 상위 3개만 로그 출력
+                    console.log(`  매칭 ${idx + 1}: ${match.matchedWords}/${searchWords.length} (${(match.wordMatchRatio * 100).toFixed(1)}%), 순서 점수: ${match.orderScore}, 총 점수: ${match.totalScore.toFixed(1)}`);
                   }
                 });
                 
@@ -775,13 +782,14 @@
                 }
               }
               
-              // ✅ 폴백: 기존 로직 (단어 순서 고려 없이)
+              // ✅ 폴백: 기존 로직 (단어 순서 고려 없이) - 조건 완화 및 모든 매칭 하이라이트
               if (highlightCount === 0) {
                 console.log('⚠️ 순서 고려 매칭 실패, 기존 방식으로 재시도...');
                 
                 const baseWindowSize = Math.max(5, searchWords.length * 2);
                 const maxWindowSize = Math.min(baseWindowSize, spanWordArray.length);
                 const fallbackWindowSize = Math.min(maxWindowSize, Math.max(3, Math.ceil(searchWords.length * 1.5)));
+                const fallbackMatches = []; // 모든 유효한 폴백 매칭 저장
                 
                 for (let i = 0; i <= spanWordArray.length - fallbackWindowSize; i++) {
                   const windowSpans = spanWordArray.slice(i, i + fallbackWindowSize);
@@ -803,8 +811,22 @@
                   }
                   
                   const wordMatchRatio = matchedWords / searchWords.length;
-                  if (matchedWords >= 4 || wordMatchRatio >= 0.5) {
-                    windowSpans.forEach(item => {
+                  // ✅ 조건 완화: 2개 이상 단어 또는 30% 이상 매칭
+                  if (matchedWords >= 2 || wordMatchRatio >= 0.3) {
+                    fallbackMatches.push({
+                      windowSpans,
+                      matchedWords,
+                      wordMatchRatio,
+                      startIndex: i
+                    });
+                  }
+                }
+                
+                // 모든 유효한 폴백 매칭 하이라이트
+                if (fallbackMatches.length > 0) {
+                  console.log(`✅ 폴백 매칭 발견: ${fallbackMatches.length}개`);
+                  fallbackMatches.forEach((match, idx) => {
+                    match.windowSpans.forEach(item => {
                       if (!matchedSpanSet.has(item.span)) {
                         item.span.classList.add('highlight-strong');
                         matchedSpanSet.add(item.span);
@@ -812,10 +834,14 @@
                       }
                     });
                     
-                    if (highlightCount > 0) {
-                      console.log(`✅ 폴백 매칭 하이라이트 완료: ${highlightCount}개 span`);
-                      return;
+                    if (idx < 3) { // 상위 3개만 로그 출력
+                      console.log(`  폴백 매칭 ${idx + 1}: ${match.matchedWords}/${searchWords.length} (${(match.wordMatchRatio * 100).toFixed(1)}%)`);
                     }
+                  });
+                  
+                  if (highlightCount > 0) {
+                    console.log(`✅ 폴백 매칭 하이라이트 완료: ${highlightCount}개 span`);
+                    return;
                   }
                 }
               }
