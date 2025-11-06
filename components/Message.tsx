@@ -33,16 +33,112 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
     return num >= 1 && num <= 35 ? circleNumbers[num - 1] : '';
   };
 
-  // ✅ AI 응답 전처리: [참조 X] 형식을 **X** 형식으로 변환
+  // ✅ AI 응답 전처리: [참조 X] 형식 및 일반 텍스트 참조 번호를 **X** 형식으로 변환
   const preprocessResponse = (content: string): string => {
     if (!content || isUser) return content;
     
-    // [참조 X] 또는 [참조 X, Y, Z] 형식을 **X** 또는 **X Y Z** 형식으로 변환
-    return content.replace(/\[참조\s+(\d+(?:\s*,\s*\d+)*)\]/g, (match, numbers) => {
-      // 쉼표로 구분된 숫자들을 공백으로 구분된 숫자로 변환
+    let processed = content;
+    
+    // 1. [참조 X] 또는 [참조 X, Y, Z] 형식을 **X** 또는 **X Y Z** 형식으로 변환
+    processed = processed.replace(/\[참조\s+(\d+(?:\s*,\s*\d+)*)\]/g, (match, numbers) => {
       const numList = numbers.split(/\s*,\s*/).map((n: string) => n.trim()).join(' ');
       return `**${numList}**`;
     });
+    
+    // 2. ✅ 개선: 일반 텍스트에서 참조 번호 패턴 찾아서 **숫자** 형식으로 변환
+    // chunkReferences에 있는 숫자 범위 내에서만 변환 (오탐 방지)
+    if (message.chunkReferences && message.chunkReferences.length > 0) {
+      const validRefNumbers = new Set<number>();
+      message.chunkReferences.forEach((ref: any, index: number) => {
+        const refNum = ref.refId || (index + 1);
+        if (refNum >= 1 && refNum <= 35) {
+          validRefNumbers.add(refNum);
+        }
+      });
+      
+      if (validRefNumbers.size > 0) {
+        // 우선순위: 더 구체적인 패턴부터 처리 (큰 숫자부터 처리하여 오버랩 방지)
+        const refNumbersArray = Array.from(validRefNumbers).sort((a, b) => b - a);
+        
+        refNumbersArray.forEach(refNum => {
+          const numStr = String(refNum);
+          
+          // 패턴 1: 숫자 뒤 점/쉼표 (가장 일반적) - 예: "9.", "14,", "15."
+          // 단, 이미 **숫자** 형식이 아니고, 문맥상 참조 번호로 보이는 경우만
+          const pattern1 = new RegExp(`(\\s|^|\\()(${refNum})([.,])(?=\\s|$|[^\\d*])`, 'g');
+          // 모든 매칭을 먼저 찾고 역순으로 처리 (문자열 변경 시 인덱스 오류 방지)
+          const matches1: Array<{index: number, match: RegExpMatchArray, before: string, num: string, punct: string}> = [];
+          let match1;
+          while ((match1 = pattern1.exec(processed)) !== null) {
+            const matchIndex = match1.index;
+            const beforeText = processed.substring(Math.max(0, matchIndex - 2), matchIndex);
+            // 이미 **숫자** 형식이 아니면 변환 대상에 추가
+            if (!beforeText.includes('**')) {
+              matches1.push({
+                index: matchIndex,
+                match: match1,
+                before: match1[1],
+                num: match1[2],
+                punct: match1[3]
+              });
+            }
+          }
+          // 역순으로 처리하여 인덱스 오류 방지
+          matches1.reverse().forEach(({index, before, num, punct, match}) => {
+            const replacement = `${before}**${num}**${punct}`;
+            processed = processed.substring(0, index) + replacement + processed.substring(index + match[0].length);
+          });
+          
+          // 패턴 2: 괄호 안의 숫자 (예: "(19)", "(제20호)")
+          const pattern2 = new RegExp(`\\(제?(${refNum})(?:호|항)?\\)`, 'g');
+          processed = processed.replace(pattern2, (match, num) => {
+            // 이미 **숫자** 형식이면 건너뛰기
+            if (match.includes('**')) {
+              return match;
+            }
+            return `(**${num}**)`;
+          });
+          
+          // 패턴 3: "제숫자호" 형식 (예: "제20호")
+          const pattern3 = new RegExp(`제(${refNum})(?:호|항)`, 'g');
+          processed = processed.replace(pattern3, (match, num) => {
+            // 이미 **숫자** 형식이면 건너뛰기
+            if (match.includes('**')) {
+              return match;
+            }
+            return `제**${num}**호`;
+          });
+          
+          // 패턴 4: 문장 내 단독 숫자 (공백으로 구분된 경우만)
+          // 예: " ... 14, 15. ..." -> " ... **14**, **15.** ..."
+          // 단, 이미 **숫자** 형식이 아니고, 다른 숫자와 인접하지 않은 경우만
+          const pattern4 = new RegExp(`(\\s|^|\\()(${refNum})(?=\\s|$|[.,]|[^\\d*])`, 'g');
+          const matches4: Array<{index: number, match: RegExpMatchArray, before: string, num: string}> = [];
+          let match4;
+          while ((match4 = pattern4.exec(processed)) !== null) {
+            const matchIndex = match4.index;
+            const beforeText = processed.substring(Math.max(0, matchIndex - 2), matchIndex);
+            const matchText = match4[0];
+            // 이미 **숫자** 형식이 아니고, 패턴 1로 변환되지 않았으면 변환 대상에 추가
+            if (!beforeText.includes('**') && !matchText.includes('**')) {
+              matches4.push({
+                index: matchIndex,
+                match: match4,
+                before: match4[1],
+                num: match4[2]
+              });
+            }
+          }
+          // 역순으로 처리하여 인덱스 오류 방지
+          matches4.reverse().forEach(({index, before, num, match}) => {
+            const replacement = `${before}**${num}**`;
+            processed = processed.substring(0, index) + replacement + processed.substring(index + match[0].length);
+          });
+        });
+      }
+    }
+    
+    return processed;
   };
 
   // ✅ 키워드 하이라이트 함수
