@@ -597,11 +597,52 @@
               return; // 검색 텍스트로 하이라이트했으면 키워드 하이라이트는 스킵
             }
           } else {
-            // ✅ 개선된 방식: 단일 검색어 - 순차적 단어 배열 + 슬라이딩 윈도우 매칭
+            // ✅ 개선된 방식: 단일 검색어 - 정확한 매칭 우선 + 단어 순서 고려
             const trimmedSearchText = searchText.trim();
+            const normalizedSearchText = normalizeTextForMatching(trimmedSearchText);
             
-            // ✅ 검색어를 단어로 분리 (단어 단위 매칭용)
-            const searchWords = normalizeTextForMatching(trimmedSearchText)
+            // ✅ 개선 1: 정확한 문자열 매칭 먼저 시도
+            const allText = Array.from(textSpans).map(s => s.textContent || '').join(' ');
+            const normalizedAllText = normalizeTextForMatching(allText);
+            
+            if (normalizedAllText.includes(normalizedSearchText)) {
+              console.log('✅ 정확한 문자열 매칭 발견, 위치 찾기 시도');
+              
+              // 정확한 매칭 위치 찾기
+              const searchStartIndex = normalizedAllText.indexOf(normalizedSearchText);
+              const searchEndIndex = searchStartIndex + normalizedSearchText.length;
+              
+              let charIndex = 0;
+              const matchedSpans = [];
+              
+              for (let i = 0; i < textSpans.length; i++) {
+                const span = textSpans[i];
+                const spanText = span.textContent || '';
+                const normalizedSpanText = normalizeTextForMatching(spanText);
+                
+                const spanStartChar = charIndex;
+                const spanEndChar = charIndex + normalizedSpanText.length;
+                
+                // span이 검색 범위와 겹치면 하이라이트
+                if (spanStartChar < searchEndIndex && spanEndChar > searchStartIndex) {
+                  matchedSpans.push(span);
+                }
+                
+                charIndex = spanEndChar;
+              }
+              
+              if (matchedSpans.length > 0) {
+                matchedSpans.forEach(span => {
+                  span.classList.add('highlight-strong');
+                  highlightCount++;
+                });
+                console.log(`✅ 정확한 문자열 매칭 하이라이트 완료: ${highlightCount}개 span`);
+                return;
+              }
+            }
+            
+            // ✅ 개선 2: 단어 기반 매칭 (단어 순서 고려)
+            const searchWords = normalizedSearchText
               .split(/\s+/)
               .filter(w => w.trim().length >= 2) // 최소 2자 이상
               .filter(w => {
@@ -640,42 +681,52 @@
               
               console.log(`📋 span 배열 완료: ${spanWordArray.length}개 span, 총 ${spanWordArray.reduce((sum, item) => sum + item.words.length, 0)}개 단어`);
               
-              // ✅ 3단계: 슬라이딩 윈도우 방식으로 단어 매칭
-              // 윈도우 크기 동적 조정 (추가 개선 사항)
-              const baseWindowSize = Math.max(5, searchWords.length * 2); // 최소 5개 span, 또는 검색어 단어 수의 2배
-              const maxWindowSize = Math.min(baseWindowSize, spanWordArray.length); // 최대 전체 span 수
-              const windowSize = Math.min(maxWindowSize, Math.max(3, Math.ceil(searchWords.length * 1.5))); // 최소 3개
+              // ✅ 개선 3: 단어 순서를 고려한 매칭 (점수 기반)
+              const windowSize = Math.max(3, Math.ceil(searchWords.length * 2));
+              const matchedSpanSet = new Set();
+              let bestMatch = null;
+              let bestScore = 0;
               
-              const matchedSpanSet = new Set(); // 중복 하이라이트 방지
-              let totalMatches = 0;
-              
-              // 큰 윈도우로 먼저 시도
               for (let i = 0; i <= spanWordArray.length - windowSize; i++) {
-                // 현재 윈도우의 span들
                 const windowSpans = spanWordArray.slice(i, i + windowSize);
                 
-                // 윈도우 내 모든 단어 수집
+                // 윈도우 내 모든 단어를 순서대로 수집
                 const windowWords = [];
                 windowSpans.forEach(item => {
                   windowWords.push(...item.words);
                 });
                 
-                // ✅ 검색어 단어들과 매칭 확인 (유사도 매칭 포함)
+                // 단어 매칭 및 순서 점수 계산
                 let matchedWords = 0;
+                let orderScore = 0;
+                let lastMatchedIndex = -1;
                 const matchedWordSet = new Set();
                 
-                for (const searchWord of searchWords) {
-                  // 윈도우 내 단어들에서 검색어 단어 찾기 (유사도 매칭 포함)
+                for (let j = 0; j < searchWords.length; j++) {
+                  const searchWord = searchWords[j];
                   let found = false;
-                  for (const windowWord of windowWords) {
-                    // 완전 일치 또는 포함 관계
-                    if (windowWord.includes(searchWord) || searchWord.includes(windowWord)) {
+                  
+                  // 현재 위치부터 찾기 (순서 고려)
+                  for (let k = Math.max(0, lastMatchedIndex + 1); k < windowWords.length; k++) {
+                    const windowWord = windowWords[k];
+                    
+                    if (windowWord.includes(searchWord) || 
+                        searchWord.includes(windowWord) ||
+                        isWordSimilar(windowWord, searchWord)) {
                       found = true;
-                      break;
-                    }
-                    // 유사도 매칭 (추가 개선 사항)
-                    if (isWordSimilar(windowWord, searchWord)) {
-                      found = true;
+                      
+                      // 순서 점수 계산 (이전 단어 바로 다음에 오면 높은 점수)
+                      if (lastMatchedIndex >= 0 && k === lastMatchedIndex + 1) {
+                        orderScore += 20; // 연속된 경우 가장 높은 점수
+                      } else if (lastMatchedIndex >= 0 && k - lastMatchedIndex <= 2) {
+                        orderScore += 10; // 가까운 경우 중간 점수
+                      } else if (lastMatchedIndex >= 0 && k - lastMatchedIndex <= 5) {
+                        orderScore += 5; // 멀리 있는 경우 낮은 점수
+                      } else {
+                        orderScore += 1; // 매우 먼 경우 최소 점수
+                      }
+                      
+                      lastMatchedIndex = k;
                       break;
                     }
                   }
@@ -686,73 +737,73 @@
                   }
                 }
                 
-                // ✅ 매칭 조건 확인: 4개 이상 OR 50% 이상 (개선된 방식)
                 const wordMatchRatio = matchedWords / searchWords.length;
-                const shouldHighlight = matchedWords >= 4 || wordMatchRatio >= 0.5;
+                // 총 점수 = 매칭 비율 점수 + 순서 점수
+                const totalScore = (wordMatchRatio * 100) + orderScore;
                 
-                if (shouldHighlight) {
-                  totalMatches++;
-                  
-                  // ✅ 매칭 로그 개선 (추가 개선 사항)
-                  console.log(`✅ 매칭 성공 #${totalMatches}:`, {
-                    windowRange: `${i}~${i + windowSize - 1}`,
-                    matchedWords: `${matchedWords}/${searchWords.length}`,
-                    ratio: `${(wordMatchRatio * 100).toFixed(1)}%`,
-                    matchedWordsList: Array.from(matchedWordSet),
-                    condition: matchedWords >= 4 ? '4개 이상' : '50% 이상'
-                  });
-                  
-                  // 윈도우 내 모든 span 하이라이트
-                  windowSpans.forEach(item => {
-                    if (!matchedSpanSet.has(item.span)) {
-                      item.span.classList.add('highlight-strong');
-                      matchedSpanSet.add(item.span);
-                      highlightCount++;
-                    }
-                  });
+                // ✅ 개선 4: 점수 기반 매칭 (순서 고려)
+                if (matchedWords >= 4 || wordMatchRatio >= 0.5 || totalScore >= 60) {
+                  if (totalScore > bestScore) {
+                    bestScore = totalScore;
+                    bestMatch = { 
+                      windowSpans, 
+                      matchedWords, 
+                      wordMatchRatio, 
+                      totalScore,
+                      orderScore,
+                      matchedWordSet
+                    };
+                  }
                 }
               }
               
-              // ✅ 4단계: 작은 윈도우로 재시도 (큰 윈도우로 매칭 실패한 경우)
+              // ✅ 개선 5: 최고 점수 매칭만 하이라이트 (중복 방지 및 정확도 향상)
+              if (bestMatch) {
+                console.log(`✅ 최고 점수 매칭: ${bestMatch.matchedWords}/${searchWords.length} (${(bestMatch.wordMatchRatio * 100).toFixed(1)}%), 순서 점수: ${bestMatch.orderScore}, 총 점수: ${bestMatch.totalScore.toFixed(1)}`);
+                
+                bestMatch.windowSpans.forEach(item => {
+                  if (!matchedSpanSet.has(item.span)) {
+                    item.span.classList.add('highlight-strong');
+                    matchedSpanSet.add(item.span);
+                    highlightCount++;
+                  }
+                });
+                
+                if (highlightCount > 0) {
+                  console.log(`✅ 단어 순서 고려 매칭 하이라이트 완료: ${highlightCount}개 span`);
+                  return;
+                }
+              }
+              
+              // ✅ 폴백: 기존 로직 (단어 순서 고려 없이)
               if (highlightCount === 0) {
-                console.log('⚠️ 큰 윈도우로 매칭 실패, 작은 윈도우로 재시도...');
+                console.log('⚠️ 순서 고려 매칭 실패, 기존 방식으로 재시도...');
                 
-                const smallWindowSize = Math.max(3, Math.ceil(searchWords.length * 1.5));
+                const baseWindowSize = Math.max(5, searchWords.length * 2);
+                const maxWindowSize = Math.min(baseWindowSize, spanWordArray.length);
+                const fallbackWindowSize = Math.min(maxWindowSize, Math.max(3, Math.ceil(searchWords.length * 1.5)));
                 
-                for (let i = 0; i <= spanWordArray.length - smallWindowSize; i++) {
-                  const windowSpans = spanWordArray.slice(i, i + smallWindowSize);
+                for (let i = 0; i <= spanWordArray.length - fallbackWindowSize; i++) {
+                  const windowSpans = spanWordArray.slice(i, i + fallbackWindowSize);
                   const windowWords = [];
                   windowSpans.forEach(item => {
                     windowWords.push(...item.words);
                   });
                   
                   let matchedWords = 0;
-                  const matchedWordSet = new Set();
-                  
                   for (const searchWord of searchWords) {
-                    let found = false;
-                    for (const windowWord of windowWords) {
-                      if (windowWord.includes(searchWord) || searchWord.includes(windowWord) || isWordSimilar(windowWord, searchWord)) {
-                        found = true;
-                        break;
-                      }
-                    }
+                    const found = windowWords.some(windowWord => {
+                      return windowWord.includes(searchWord) || 
+                             searchWord.includes(windowWord) ||
+                             isWordSimilar(windowWord, searchWord);
+                    });
                     if (found) {
                       matchedWords++;
-                      matchedWordSet.add(searchWord);
                     }
                   }
                   
                   const wordMatchRatio = matchedWords / searchWords.length;
                   if (matchedWords >= 4 || wordMatchRatio >= 0.5) {
-                    totalMatches++;
-                    console.log(`✅ 작은 윈도우 매칭 성공 #${totalMatches}:`, {
-                      windowRange: `${i}~${i + smallWindowSize - 1}`,
-                      matchedWords: `${matchedWords}/${searchWords.length}`,
-                      ratio: `${(wordMatchRatio * 100).toFixed(1)}%`,
-                      matchedWordsList: Array.from(matchedWordSet)
-                    });
-                    
                     windowSpans.forEach(item => {
                       if (!matchedSpanSet.has(item.span)) {
                         item.span.classList.add('highlight-strong');
@@ -760,14 +811,16 @@
                         highlightCount++;
                       }
                     });
+                    
+                    if (highlightCount > 0) {
+                      console.log(`✅ 폴백 매칭 하이라이트 완료: ${highlightCount}개 span`);
+                      return;
+                    }
                   }
                 }
               }
               
-              if (highlightCount > 0) {
-                console.log(`✅ 단어 단위 매칭 하이라이트 완료: ${highlightCount}개 span 하이라이트, 총 ${totalMatches}개 매칭 구간`);
-                return; // 성공적으로 하이라이트했으면 종료
-              } else {
+              if (highlightCount === 0) {
                 console.log('⚠️ 단어 단위 매칭 실패: 조건을 만족하는 매칭을 찾지 못했습니다.');
               }
             }
