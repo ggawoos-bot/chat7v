@@ -671,8 +671,40 @@ function App() {
       }
     }
     
-    // 3순위: chunkContent에서 가장 긴/핵심 문장 선택
+    // 3순위: chunkContent에서 가장 긴/핵심 문장 선택 (AI 응답과 유사한 문장 우선)
     if (chunkContent) {
+      // ✅ 개선: AI 응답과 유사한 문장 찾기 시도
+      if (responseText && referenceNumber > 0) {
+        const refContext = extractSentenceFromResponse(responseText, referenceNumber);
+        if (refContext) {
+          // 청크 내용을 문장으로 분할
+          const sentences = chunkContent
+            .split(/[.。!！?？\n]/)
+            .map(s => s.trim())
+            .filter(s => s.length >= 15);
+          
+          if (sentences.length > 0) {
+            // 유사한 문장 찾기
+            const normalizeText = (text: string) => 
+              text.replace(/\s+/g, ' ').replace(/[\n\r\t]/g, ' ').trim().toLowerCase();
+            
+            const normalizedRef = normalizeText(refContext);
+            const similarSentence = sentences.find(s => {
+              const normalized = normalizeText(s);
+              // 부분 매칭 (최소 20자 이상 일치)
+              return normalized.includes(normalizedRef.substring(0, Math.min(20, normalizedRef.length))) ||
+                     normalizedRef.includes(normalized.substring(0, Math.min(20, normalized.length)));
+            });
+            
+            if (similarSentence) {
+              console.log('✅ [3순위-개선] AI 응답과 유사한 청크 문장 찾음:', similarSentence.substring(0, 60));
+              return similarSentence.substring(0, 60);
+            }
+          }
+        }
+      }
+      
+      // 폴백: 가장 긴 문장 사용
       const bestSentence = extractBestSentence(chunkContent);
       if (bestSentence) {
         console.log('✅ [3순위] 청크에서 핵심 문장 추출:', bestSentence);

@@ -311,6 +311,45 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
       console.log('✅ 툴팁: AI 응답에서 문장 추출:', targetSentence ? targetSentence.substring(0, 60) : null);
     }
     
+    // ✅ 3순위: referencedSentence가 없어도 청크 내용에서 직접 매칭 시도
+    if (!targetSentence && chunkContent) {
+      // 청크 내용을 문장으로 분할
+      const sentences = chunkContent
+        .split(/[.。!！?？\n]/)
+        .map(s => s.trim())
+        .filter(s => s.length >= 15);
+      
+      if (sentences.length > 0) {
+        // AI 응답과 유사한 문장 찾기
+        if (responseText && referenceNumber) {
+          const refContext = extractSentenceFromResponseForTooltip(responseText, referenceNumber);
+          if (refContext) {
+            const normalizeText = (text: string) => 
+              text.replace(/\s+/g, ' ').replace(/[\n\r\t]/g, ' ').trim().toLowerCase();
+            
+            const normalizedRef = normalizeText(refContext);
+            const similarSentence = sentences.find(s => {
+              const normalized = normalizeText(s);
+              // 부분 매칭 (최소 20자 이상 일치)
+              return normalized.includes(normalizedRef.substring(0, Math.min(20, normalizedRef.length))) ||
+                     normalizedRef.includes(normalized.substring(0, Math.min(20, normalized.length)));
+            });
+            
+            if (similarSentence) {
+              targetSentence = similarSentence;
+              console.log('✅ 툴팁: 청크에서 유사한 문장 찾음:', targetSentence.substring(0, 60));
+            }
+          }
+        }
+        
+        // 여전히 없으면 가장 긴 문장 사용
+        if (!targetSentence) {
+          targetSentence = sentences.reduce((a, b) => a.length > b.length ? a : b);
+          console.log('✅ 툴팁: 청크에서 가장 긴 문장 사용:', targetSentence.substring(0, 60));
+        }
+      }
+    }
+    
     // ✅ 2단계: 유사한 문장 찾기 및 핵심 단어 추출 (키워드 하이라이트 전에 적용)
     let highlighted = chunkContent;
     

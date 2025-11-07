@@ -926,8 +926,71 @@ Here is the source material:
       }
       
       if (matchIndex < 0) {
-        // 참조 번호를 찾지 못함
-        console.log(`⚠️ 참조 번호 ${refNumber}를 응답에서 찾지 못함`);
+        // ✅ 개선: 참조 번호를 찾지 못해도 청크 내용에서 직접 매칭 시도
+        console.log(`⚠️ 참조 번호 ${refNumber}를 응답에서 찾지 못함, 청크 내용에서 직접 매칭 시도`);
+        
+        // 청크 내용에서 핵심 문장 추출하여 referencedSentence 설정
+        const chunkContent = chunkRef.content || '';
+        if (chunkContent && chunkContent.length >= 15) {
+          // 저장된 sentences 배열 우선 사용
+          const storedSentences = (chunkRef as any).metadata?.sentences || 
+                                  (chunkRef as any).sentences || [];
+          const sentencePageMap = (chunkRef as any).metadata?.sentencePageMap || 
+                                 (chunkRef as any).sentencePageMap || {};
+          
+          let chunkSentences: string[] = [];
+          if (storedSentences.length > 0) {
+            chunkSentences = storedSentences;
+            console.log(`✅ 참조 번호 ${refNumber}: 저장된 sentences 배열 사용 (${storedSentences.length}개 문장)`);
+          } else {
+            // 폴백: 청크 내용 분할
+            chunkSentences = chunkContent
+              .split(/[.。!！?？\n]/)
+              .map(s => s.trim())
+              .filter(s => s.length >= 15);
+            console.log(`⚠️ 참조 번호 ${refNumber}: 저장된 sentences 없음, 청크 내용 분할 사용 (${chunkSentences.length}개 문장)`);
+          }
+          
+          if (chunkSentences.length > 0) {
+            // 가장 긴 문장 또는 첫 번째 문장 사용
+            const bestSentence = chunkSentences.reduce((a, b) => a.length > b.length ? a : b);
+            
+            // sentencePageMap에서 페이지 정보 가져오기
+            let sentenceIndex = -1;
+            let pageFromSentenceMap = null;
+            
+            if (storedSentences.length > 0) {
+              // 저장된 sentences 배열에서 가장 유사한 문장 찾기
+              sentenceIndex = storedSentences.findIndex(s => {
+                const normalized = this.normalizeTextForMatching(s);
+                const normalizedBest = this.normalizeTextForMatching(bestSentence);
+                return normalized.includes(normalizedBest.substring(0, Math.min(20, normalizedBest.length))) ||
+                       normalizedBest.includes(normalized.substring(0, Math.min(20, normalized.length)));
+              });
+              
+              if (sentenceIndex >= 0 && sentencePageMap && typeof sentencePageMap === 'object') {
+                pageFromSentenceMap = sentencePageMap[sentenceIndex];
+                if (pageFromSentenceMap) {
+                  console.log(`✅ 참조 번호 ${refNumber}: 문장 인덱스 ${sentenceIndex} -> 페이지 ${pageFromSentenceMap} (sentencePageMap 사용)`);
+                }
+              }
+            } else {
+              // 폴백: 첫 번째 문장 인덱스 사용
+              sentenceIndex = 0;
+              if (sentencePageMap && typeof sentencePageMap === 'object') {
+                pageFromSentenceMap = sentencePageMap[0];
+              }
+            }
+            
+            return {
+              ...chunkRef,
+              referencedSentence: bestSentence.substring(0, 200),
+              referencedSentenceIndex: sentenceIndex >= 0 ? sentenceIndex : undefined,
+              pageFromSentenceMap: pageFromSentenceMap || undefined
+            };
+          }
+        }
+        
         return chunkRef;
       }
       
