@@ -229,6 +229,16 @@
       padding: 2px 3px;
       font-weight: normal; /* ✅ bold 제거하여 글씨 가독성 향상 */
     }
+    
+    .textLayer .highlight-current {
+      background-color: rgba(255, 87, 34, 0.8) !important; /* ✅ 현재 선택된 항목: 주황색 강조 */
+      color: #fff !important;
+      border: 2px solid rgba(255, 87, 34, 1) !important;
+      border-radius: 3px;
+      padding: 2px 3px;
+      font-weight: 600;
+      box-shadow: 0 0 4px rgba(255, 87, 34, 0.5);
+    }
   </style>
 </head>
 <body>
@@ -471,9 +481,9 @@
             
             // 검색어가 있으면 검색어로 하이라이트 (키워드 무시)
             if (currentSearchText) {
-              applyHighlight(textLayerDiv, [], currentSearchText);
+              applyHighlight(textLayerDiv, [], currentSearchText, currentSearchIndex);
             } else {
-              applyHighlight(textLayerDiv, highlightKeywords, highlightText);
+              applyHighlight(textLayerDiv, highlightKeywords, highlightText, -1);
             }
             
             // 하이라이트 위치로 스크롤 (즉시)
@@ -819,19 +829,25 @@
     }
     
     // 하이라이트 적용 함수 (개선된 버전: 순차적 단어 배열 + 슬라이딩 윈도우 매칭)
-    function applyHighlight(textLayer, keywords, searchText) {
+    function applyHighlight(textLayer, keywords, searchText, currentSearchIndex = -1) {
       if (!textLayer || (!keywords.length && !searchText)) {
         console.log('⚠️ 하이라이트할 키워드나 텍스트가 없습니다.');
         return;
       }
       
       // ✅ 기존 하이라이트 제거
-      textLayer.querySelectorAll('.highlight, .highlight-strong').forEach(el => {
-        el.classList.remove('highlight', 'highlight-strong');
+      textLayer.querySelectorAll('.highlight, .highlight-strong, .highlight-current').forEach(el => {
+        el.classList.remove('highlight', 'highlight-strong', 'highlight-current');
       });
       
       const textSpans = textLayer.querySelectorAll('span');
       let highlightCount = 0;
+      
+      // ✅ 현재 선택된 검색 결과 정보 가져오기
+      let currentResult = null;
+      if (currentSearchIndex >= 0 && currentSearchIndex < searchResults.length) {
+        currentResult = searchResults[currentSearchIndex];
+      }
       
       // ✅ 0단계: PDF.js 좌표 기반 정확 매칭 (최우선, 99%+ 정확도)
       if (searchText && searchText.trim().length >= 10) {
@@ -859,28 +875,37 @@
         }
       }
       
-      // ✅ 1단계: 검색 텍스트로 정확한 매칭 (콤마 구분 검색어 지원)
+      // ✅ 1단계: 검색 텍스트로 정확한 매칭 (공백 구분 AND 조건 지원)
       if (searchText && searchText.trim().length > 0) {
-        // ✅ 콤마로 구분된 검색어 파싱
+        // ✅ 개선: 공백으로 구분된 검색어 파싱 (AND 조건)
         const searchQueries = searchText
-          .split(',')
+          .split(/\s+/) // 공백(연속 공백 포함)으로 분할
           .map(q => q.trim())
-          .filter(q => q.length >= 3) // 최소 3자 이상
+          .filter(q => q.length >= 2) // 최소 2자 이상
           .map(q => normalizeTextForMatching(q)); // ✅ 텍스트 정규화 적용
         
         if (searchQueries.length > 0) {
           const isMultiSearch = searchQueries.length > 1;
           
           if (isMultiSearch) {
-            // ✅ 복수 검색어: 각 검색어를 모두 하이라이트 (정규화된 텍스트로 매칭)
-            textSpans.forEach((span) => {
+            // ✅ 복수 검색어: 각 검색어를 모두 하이라이트 (AND 조건 - 모든 검색어 포함)
+            textSpans.forEach((span, spanIndex) => {
               const text = normalizeTextForMatching(span.textContent || '');
               if (!text.trim()) return;
               
-              // 모든 검색어 중 하나라도 포함되면 하이라이트
+              // 모든 검색어를 하이라이트
               for (const query of searchQueries) {
                 if (text.includes(query)) {
-                  span.classList.add('highlight-strong');
+                  // ✅ 현재 선택된 검색 결과인지 확인
+                  const isCurrentResult = currentResult && 
+                                         currentResult.page === currentPage &&
+                                         currentResult.query === query;
+                  
+                  if (isCurrentResult) {
+                    span.classList.add('highlight-current');
+                  } else {
+                    span.classList.add('highlight-strong');
+                  }
                   highlightCount++;
                   break; // 하나만 찾으면 충분 (중복 방지)
                 }
@@ -895,17 +920,29 @@
             // ✅ 개선된 방식: 단일 검색어 - 정확한 매칭 우선 + 단어 순서 고려
             const trimmedSearchText = searchText.trim();
             const normalizedSearchText = normalizeTextForMatching(trimmedSearchText);
+            const query = searchQueries[0];
+            
+            // ✅ 현재 페이지의 모든 검색 결과 찾기
+            const currentPageResults = searchResults.filter(r => r.page === currentPage);
+            let currentResultIndex = -1;
+            if (currentResult && currentResult.page === currentPage) {
+              currentResultIndex = currentPageResults.findIndex(r => 
+                r.page === currentResult.page && 
+                r.position === currentResult.position
+              );
+            }
             
             // ✅ 개선 1: 정확한 문자열 매칭 먼저 시도
             const allText = Array.from(textSpans).map(s => s.textContent || '').join(' ');
             const normalizedAllText = normalizeTextForMatching(allText);
             
-            if (normalizedAllText.includes(normalizedSearchText)) {
-              console.log('✅ 정확한 문자열 매칭 발견, 위치 찾기 시도');
-              
-              // 정확한 매칭 위치 찾기
-              const searchStartIndex = normalizedAllText.indexOf(normalizedSearchText);
-              const searchEndIndex = searchStartIndex + normalizedSearchText.length;
+            // 모든 매칭 위치 찾기
+            let searchStartIndex = normalizedAllText.indexOf(query);
+            let matchIndex = 0;
+            const allMatches = [];
+            
+            while (searchStartIndex !== -1) {
+              const searchEndIndex = searchStartIndex + query.length;
               
               let charIndex = 0;
               const matchedSpans = [];
@@ -927,13 +964,35 @@
               }
               
               if (matchedSpans.length > 0) {
-                matchedSpans.forEach(span => {
-                  span.classList.add('highlight-strong');
+                allMatches.push({
+                  spans: matchedSpans,
+                  matchIndex: matchIndex,
+                  position: searchStartIndex
+                });
+                matchIndex++;
+              }
+              
+              searchStartIndex = normalizedAllText.indexOf(query, searchStartIndex + 1);
+            }
+            
+            if (allMatches.length > 0) {
+              // ✅ 모든 매칭을 하이라이트하고, 현재 선택된 항목만 강조
+              allMatches.forEach((match, matchArrayIndex) => {
+                const isCurrentMatch = currentResultIndex >= 0 && 
+                                      matchArrayIndex === currentResultIndex;
+                
+                match.spans.forEach((span) => {
+                  if (isCurrentMatch) {
+                    span.classList.add('highlight-current');
+                  } else {
+                    span.classList.add('highlight-strong');
+                  }
                   highlightCount++;
                 });
-                console.log(`✅ 정확한 문자열 매칭 하이라이트 완료: ${highlightCount}개 span`);
-                return;
-              }
+              });
+              
+              console.log(`✅ 정확한 문자열 매칭 하이라이트 완료: ${highlightCount}개 span (${allMatches.length}개 매칭)`);
+              return;
             }
             
             // ✅ 개선 2: 단어 기반 매칭 (단어 순서 고려)
@@ -1183,7 +1242,8 @@
     
     // 하이라이트된 요소로 스크롤 (즉시 실행)
     function scrollToHighlight(textLayer) {
-      const highlighted = textLayer.querySelector('.highlight, .highlight-strong');
+      // ✅ 현재 선택된 항목 우선, 없으면 일반 하이라이트
+      const highlighted = textLayer.querySelector('.highlight-current, .highlight-strong, .highlight');
       if (highlighted) {
         console.log('📍 하이라이트 위치로 스크롤 중...');
         // 즉시 스크롤 (smooth 대신 auto로 변경하여 더 빠른 반응)
@@ -1200,16 +1260,16 @@
       }
     }
     
-    // 검색 함수: 전체 PDF에서 검색어 찾기 (콤마 구분 지원)
+    // 검색 함수: 전체 PDF에서 검색어 찾기 (공백 구분 AND 조건 지원)
     async function performSearch(searchText) {
       if (!pdfDoc || !searchText || !searchText.trim()) {
         console.log('⚠️ 검색할 수 없습니다:', { pdfDoc: !!pdfDoc, searchText });
         return;
       }
       
-      // ✅ 콤마로 구분된 검색어 파싱
+      // ✅ 개선: 공백으로 구분된 검색어 파싱 (AND 조건)
       const searchQueries = searchText
-        .split(',')
+        .split(/\s+/) // 공백(연속 공백 포함)으로 분할
         .map(q => q.trim())
         .filter(q => q.length > 0)
         .map(q => q.toLowerCase());
@@ -1228,8 +1288,13 @@
       searchButton.textContent = '검색중...';
       
       try {
-        // 모든 페이지에서 검색
-        for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        // ✅ 개선: 현재 페이지부터 검색 시작
+        const startPage = currentPage || 1;
+        
+        // 현재 페이지부터 끝까지 검색
+        for (let i = 0; i < numPages; i++) {
+          const pageNum = ((startPage - 1 + i) % numPages) + 1;
+          
           try {
             const page = await pdfDoc.getPage(pageNum);
             const textContent = await page.getTextContent();
@@ -1245,21 +1310,33 @@
             const textLower = fullText.toLowerCase();
             
             if (isMultiSearch) {
-              // ✅ 복수 검색어: 모든 검색어가 포함된 페이지만 찾기 (AND 조건)
+              // ✅ 복수 검색어: 모든 검색어가 포함된 경우만 찾기 (AND 조건)
               const allKeywordsFound = searchQueries.every(query => 
                 textLower.includes(query)
               );
               
               if (allKeywordsFound) {
-                // 모든 검색어가 포함된 경우, 페이지를 결과에 추가
-                searchResults.push({
-                  page: pageNum,
-                  index: 0, // 페이지당 하나의 결과만
-                  keywords: searchQueries // 하이라이트용 검색어 목록
+                // 모든 검색어가 포함된 경우, 각 검색어의 모든 위치 찾기
+                let foundAny = false;
+                searchQueries.forEach(query => {
+                  let index = textLower.indexOf(query);
+                  let resultIndex = 0;
+                  
+                  while (index !== -1) {
+                    searchResults.push({
+                      page: pageNum,
+                      index: resultIndex,
+                      query: query, // 어떤 검색어인지 저장
+                      position: index // 텍스트 내 위치
+                    });
+                    resultIndex++;
+                    foundAny = true;
+                    index = textLower.indexOf(query, index + 1);
+                  }
                 });
               }
             } else {
-              // 단일 검색어: 기존 로직 (모든 매칭 위치 찾기)
+              // 단일 검색어: 모든 매칭 위치 찾기
               const query = searchQueries[0];
               let index = textLower.indexOf(query);
               let resultIndex = 0;
@@ -1267,7 +1344,9 @@
               while (index !== -1) {
                 searchResults.push({
                   page: pageNum,
-                  index: resultIndex
+                  index: resultIndex,
+                  query: query,
+                  position: index
                 });
                 resultIndex++;
                 index = textLower.indexOf(query, index + 1);
@@ -1278,7 +1357,19 @@
           }
         }
         
-        console.log(`✅ 검색 완료: ${searchResults.length}개 ${isMultiSearch ? '페이지' : '결과'} 발견`);
+        // ✅ 검색 결과를 페이지 번호와 위치 순으로 정렬
+        searchResults.sort((a, b) => {
+          if (a.page !== b.page) {
+            // 페이지 번호 순 (현재 페이지 기준 순환)
+            const aPageOrder = ((a.page - startPage + numPages) % numPages);
+            const bPageOrder = ((b.page - startPage + numPages) % numPages);
+            return aPageOrder - bPageOrder;
+          }
+          // 같은 페이지면 위치 순
+          return a.position - b.position;
+        });
+        
+        console.log(`✅ 검색 완료: ${searchResults.length}개 결과 발견`);
         
         // 검색 결과 UI 업데이트
         if (searchResults.length > 0) {
@@ -1322,7 +1413,7 @@
         const textLayerDiv = document.querySelector('.textLayer');
         if (textLayerDiv) {
           setTimeout(() => {
-            applyHighlight(textLayerDiv, [], currentSearchText);
+            applyHighlight(textLayerDiv, [], currentSearchText, index);
             scrollToHighlight(textLayerDiv);
           }, 300);
         }

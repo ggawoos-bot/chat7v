@@ -148,26 +148,73 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     };
   };
 
-  // 텍스트에서 검색어를 하이라이트 처리하는 함수
+  // 텍스트에서 검색어를 하이라이트 처리하는 함수 (복수 단어 지원)
   const highlightSearchTerm = (text: string, searchTerm: string) => {
     if (!searchTerm || !text) return text;
 
-    // 원본 검색어 사용 (대소문자 구분 안 함)
-    const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(${escapedSearchTerm})`, 'gi');
-    const parts = text.split(regex);
+    // ✅ 방안 2: 공백으로 구분된 단어들을 각각 하이라이트
+    const searchTerms = searchTerm
+      .split(/\s+/)
+      .map(term => term.trim())
+      .filter(term => term.length > 0);
+    
+    // 단일 검색어인 경우 기존 방식 사용
+    if (searchTerms.length === 1) {
+      const escapedSearchTerm = searchTerms[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(${escapedSearchTerm})`, 'gi');
+      const parts = text.split(regex);
 
-    return parts.map((part, index) => {
-      // 각 부분이 검색어와 일치하는지 확인 (대소문자 무시)
-      const isMatch = part.toLowerCase() === searchTerm.toLowerCase();
-      return isMatch ? (
-        <span key={index} className="search-highlight bg-yellow-200 text-yellow-900 font-medium px-0.5 rounded">
-          {part}
-        </span>
-      ) : (
-        part
-      );
+      return parts.map((part, index) => {
+        const isMatch = part.toLowerCase() === searchTerms[0].toLowerCase();
+        return isMatch ? (
+          <span key={index} className="search-highlight bg-yellow-200 text-yellow-900 font-medium px-0.5 rounded">
+            {part}
+          </span>
+        ) : (
+          part
+        );
+      });
+    }
+    
+    // 복수 검색어인 경우: 각 단어를 순차적으로 하이라이트 적용
+    let highlightedText: React.ReactNode[] = [text];
+    
+    searchTerms.forEach((term, termIndex) => {
+      const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(${escapedTerm})`, 'gi');
+      
+      // 현재까지의 하이라이트 결과를 다시 처리
+      const newParts: React.ReactNode[] = [];
+      
+      highlightedText.forEach((part) => {
+        if (typeof part === 'string') {
+          const parts = part.split(regex);
+          parts.forEach((p, i) => {
+            const isMatch = p.toLowerCase() === term.toLowerCase();
+            if (isMatch) {
+              // 하이라이트 적용
+              newParts.push(
+                <span 
+                  key={`term-${termIndex}-part-${i}-${newParts.length}`} 
+                  className="search-highlight bg-yellow-200 text-yellow-900 font-medium px-0.5 rounded"
+                >
+                  {p}
+                </span>
+              );
+            } else if (p) {
+              newParts.push(p);
+            }
+          });
+        } else {
+          // 이미 하이라이트된 부분은 그대로 유지
+          newParts.push(part);
+        }
+      });
+      
+      highlightedText = newParts;
     });
+    
+    return <>{highlightedText}</>;
   };
 
   // ✅ 질문 내용에서 의미있는 단어들을 추출하여 하이라이트하는 함수
@@ -511,22 +558,44 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
   // 간단 검색: 텍스트 포함 청크를 찾아 해당 페이지로 이동 후 스크롤
   const handleSearchSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const query = (searchText || '').trim().toLowerCase();
+    const query = (searchText || '').trim();
     if (!query || chunks.length === 0) return;
     
     try {
       setIsSearching(true);
       
+      // ✅ 방안 1: 공백으로 구분된 단어들을 AND 조건으로 검색
+      const searchTerms = query
+        .split(/\s+/) // 공백(연속 공백 포함)으로 분할
+        .map(term => term.trim().toLowerCase())
+        .filter(term => term.length > 0); // 빈 문자열 제거
+      
+      const normalizedQuery = query.toLowerCase();
+      
       // 검색어가 변경되었거나 처음 검색하는 경우
-      if (query !== lastSearchQuery) {
-        // 모든 매칭 청크 찾기
-        const matches = chunks.filter((c) => (c.content || '').toLowerCase().includes(query));
+      if (normalizedQuery !== lastSearchQuery) {
+        // ✅ AND 조건: 모든 검색어가 포함된 청크만 찾기
+        const matches = chunks.filter((c) => {
+          const content = (c.content || '').toLowerCase();
+          
+          // 단일 검색어인 경우 (공백이 없는 경우)
+          if (searchTerms.length === 1) {
+            return content.includes(searchTerms[0]);
+          }
+          
+          // 복수 검색어인 경우: 모든 단어가 포함되어야 함 (AND 조건)
+          return searchTerms.every(term => content.includes(term));
+        });
+        
         setSearchResults(matches);
         setCurrentSearchIndex(0);
-        setLastSearchQuery(query);
+        setLastSearchQuery(normalizedQuery);
         
         if (matches.length > 0) {
           navigateToSearchResult(matches[0], 0);
+        } else {
+          // 검색 결과가 없을 때 사용자에게 알림
+          console.log(`⚠️ 검색 결과 없음: "${query}" (${searchTerms.length}개 단어 모두 포함 필요)`);
         }
       } else {
         // 같은 검색어로 다음 결과 찾기
