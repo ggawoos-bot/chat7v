@@ -158,254 +158,88 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
       .map(term => term.trim())
       .filter(term => term.length > 0);
     
-    // 단일 검색어인 경우 기존 방식 사용
-    if (searchTerms.length === 1) {
-      const escapedSearchTerm = searchTerms[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`(${escapedSearchTerm})`, 'gi');
-      const parts = text.split(regex);
-
-      return parts.map((part, index) => {
-        const isMatch = part.toLowerCase() === searchTerms[0].toLowerCase();
-        return isMatch ? (
-          <span key={index} className="search-highlight bg-yellow-200 text-yellow-900 font-medium px-0.5 rounded">
-            {part}
-          </span>
-        ) : (
-          part
-        );
-      });
-    }
+    // ✅ 모든 검색어를 개별적으로 하이라이트 (단일/복수 구분 없이)
+    // 각 검색어를 순차적으로 하이라이트 적용
+    let highlightedText: React.ReactNode = text;
     
-    // ✅ 복수 검색어인 경우: 라인/문장 단위 하이라이트
-    // 1단계: 줄바꿈으로 분할하여 라인 단위 확인
-    const lines = text.split('\n');
-    const lineMatches: { start: number; end: number; line: string }[] = [];
-    let charIndex = 0;
-    
-    lines.forEach((line) => {
-      const normalizedLine = line.toLowerCase();
-      // ✅ 모든 검색어가 포함되어 있는지 엄격하게 확인
-      const allTermsIncluded = searchTerms.every(term => 
-        normalizedLine.includes(term.toLowerCase())
-      );
+    searchTerms.forEach((term, termIndex) => {
+      const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(${escapedTerm})`, 'gi');
       
-      // 모든 검색어가 포함된 라인만 저장
-      if (allTermsIncluded && searchTerms.length >= 2) {
-        lineMatches.push({
-          start: charIndex,
-          end: charIndex + line.length,
-          line: line
-        });
-      }
-      
-      charIndex += line.length + 1; // +1은 줄바꿈 문자
-    });
-    
-    // 2단계: 문장으로 분할하고 2개 이상의 검색어가 포함된 문장 찾기
-    const sentenceRegex = /([^.。!！?？\n]+[.。!！?？\n]+)/g;
-    const sentenceMatches: { start: number; end: number; sentence: string }[] = [];
-    let match;
-    
-    while ((match = sentenceRegex.exec(text)) !== null) {
-      const sentenceText = match[0].trim();
-      if (sentenceText.length < 5) continue; // 너무 짧은 문장은 스킵
-      
-      const normalizedSentence = sentenceText.toLowerCase();
-      
-      // ✅ 모든 검색어가 포함되어 있는지 엄격하게 확인
-      const allTermsIncluded = searchTerms.every(term => 
-        normalizedSentence.includes(term.toLowerCase())
-      );
-      
-      // 모든 검색어가 포함된 경우만 저장
-      if (allTermsIncluded && searchTerms.length >= 2) {
-        sentenceMatches.push({
-          start: match.index,
-          end: match.index + match[0].length,
-          sentence: sentenceText
-        });
-      }
-    }
-    
-    // 마지막 문장 처리 (문장 종료 문자가 없는 경우)
-    const lastSentenceStart = sentenceMatches.length > 0 
-      ? sentenceMatches[sentenceMatches.length - 1].end 
-      : 0;
-    if (lastSentenceStart < text.length) {
-      const lastSentence = text.substring(lastSentenceStart).trim();
-      if (lastSentence.length >= 5) {
-        const normalizedLastSentence = lastSentence.toLowerCase();
-        const allTermsIncluded = searchTerms.every(term => 
-          normalizedLastSentence.includes(term.toLowerCase())
-        );
-        
-        if (allTermsIncluded && searchTerms.length >= 2) {
-          sentenceMatches.push({
-            start: lastSentenceStart,
-            end: text.length,
-            sentence: lastSentence
-          });
-        }
-      }
-    }
-    
-    // 3단계: 라인 매칭과 문장 매칭을 합치되, 더 작은 범위를 우선
-    // ✅ 개선: 겹치는 경우 더 작은 범위를 유지하도록 변경
-    const allMatches = [
-      ...lineMatches.map(l => ({ start: l.start, end: l.end, text: l.line, size: l.end - l.start })),
-      ...sentenceMatches.map(s => ({ start: s.start, end: s.end, text: s.sentence, size: s.end - s.start }))
-    ];
-    
-    // ✅ 개선: 겹치는 범위 처리 - 더 작은 범위를 우선하고, 완전히 포함되는 경우만 제거
-    const sortedMatches = allMatches.sort((a, b) => {
-      if (a.start !== b.start) return a.start - b.start;
-      // 같은 시작 위치면 더 작은 범위를 우선
-      return a.size - b.size;
-    });
-    
-    const uniqueMatches: { start: number; end: number; text: string }[] = [];
-    
-    sortedMatches.forEach(match => {
-      // ✅ 기존 매칭과 겹치지 않거나, 완전히 포함되지 않는 경우만 추가
-      let shouldAdd = true;
-      
-      for (let i = uniqueMatches.length - 1; i >= 0; i--) {
-        const existing = uniqueMatches[i];
-        
-        // 완전히 포함되는 경우 제외
-        if (match.start >= existing.start && match.end <= existing.end) {
-          shouldAdd = false;
-          break;
-        }
-        
-        // 기존 매칭을 완전히 포함하는 경우 기존 것을 제거하고 새 것으로 교체
-        if (match.start <= existing.start && match.end >= existing.end) {
-          uniqueMatches.splice(i, 1);
-          continue;
-        }
-        
-        // 부분적으로 겹치는 경우 - 더 작은 범위를 유지
-        if (match.start < existing.end && match.end > existing.start) {
-          const matchSize = match.end - match.start;
-          const existingSize = existing.end - existing.start;
-          if (matchSize < existingSize) {
-            // 더 작은 범위로 교체
-            uniqueMatches.splice(i, 1);
-            continue;
-          } else {
-            // 기존 것이 더 작으면 추가하지 않음
-            shouldAdd = false;
-            break;
-          }
-        }
-      }
-      
-      if (shouldAdd) {
-        uniqueMatches.push(match);
-      }
-    });
-    
-    // ✅ 최종 정렬
-    uniqueMatches.sort((a, b) => a.start - b.start);
-    
-    // ✅ 6줄 이상인 매칭 제외
-    const filteredMatches = uniqueMatches.filter(match => {
-      const matchText = text.substring(match.start, match.end);
-      const lineCount = (matchText.match(/\n/g) || []).length + 1; // 줄바꿈 개수 + 1
-      return lineCount < 6; // 6줄 미만만 허용
-    });
-    
-    // 4단계: 매칭된 라인/문장 하이라이트와 단어 하이라이트를 결합
-    let highlightedText: React.ReactNode[] = [];
-    let lastIndex = 0;
-    
-    // 하이라이트할 매칭이 있는 경우만 처리
-    if (filteredMatches.length > 0) {
-      filteredMatches.forEach((match, matchIndex) => {
-        // 매칭 이전 텍스트
-        if (match.start > lastIndex) {
-          const beforeText = text.substring(lastIndex, match.start);
-          highlightedText.push(beforeText);
-        }
-        
-        // 매칭된 텍스트를 하이라이트 (배경색으로, 텍스트는 파란색)
-        const matchText = text.substring(match.start, match.end);
-        highlightedText.push(
-          <span 
-            key={`match-${matchIndex}`}
-            className="search-sentence-highlight bg-yellow-100 text-blue-600 px-1 rounded"
-          >
-            {matchText}
-          </span>
-        );
-        
-        lastIndex = match.end;
-      });
-      
-      // 마지막 매칭 이후 텍스트
-      if (lastIndex < text.length) {
-        highlightedText.push(text.substring(lastIndex));
-      }
-      
-      // 5단계: 개별 단어도 하이라이트 적용 (하이라이트된 영역 내에서만)
-      searchTerms.forEach((term, termIndex) => {
-        const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`(${escapedTerm})`, 'gi');
-        
-        const newParts: React.ReactNode[] = [];
-        
-        highlightedText.forEach((part) => {
-          if (typeof part === 'string') {
-            // 하이라이트되지 않은 텍스트는 그대로 유지 (개별 단어 하이라이트 안 함)
-            newParts.push(part);
-          } else if (React.isValidElement(part)) {
-            // 이미 하이라이트된 부분 (라인/문장 하이라이트)은 내부 텍스트만 처리
-            const children = part.props.children;
-            
-            if (typeof children === 'string') {
-              const parts = children.split(regex);
-              const sentenceParts: React.ReactNode[] = [];
-              
-              parts.forEach((p, i) => {
-                const isMatch = p.toLowerCase() === term.toLowerCase();
-                if (isMatch) {
-                  sentenceParts.push(
-                    <span 
-                      key={`sentence-term-${termIndex}-${i}`}
-                      className="search-highlight bg-yellow-300 text-blue-700 font-bold px-0.5 rounded"
-                    >
-                      {p}
-                    </span>
-                  );
-                } else if (p) {
-                  sentenceParts.push(p);
-                }
-              });
-              
-              // 라인/문장 하이라이트 안에 단어 하이라이트 포함
-              newParts.push(
+      // 현재 highlightedText를 처리하는 함수
+      const processNode = (node: React.ReactNode): React.ReactNode => {
+        if (typeof node === 'string') {
+          const parts = node.split(regex);
+          return parts.map((part, i) => {
+            const isMatch = part.toLowerCase() === term.toLowerCase();
+            if (isMatch) {
+              return (
                 <span 
-                  key={part.key || `sentence-${termIndex}-${newParts.length}`}
-                  className={part.props.className}
+                  key={`term-${termIndex}-${i}`}
+                  className="search-highlight bg-yellow-200 text-yellow-900 font-bold px-0.5 rounded"
                 >
-                  {sentenceParts}
+                  {part}
                 </span>
               );
-            } else {
-              // children이 string이 아닌 경우 그대로 유지
-              newParts.push(part);
             }
-          } else {
-            newParts.push(part);
+            return part;
+          });
+        } else if (React.isValidElement(node)) {
+          // 이미 하이라이트된 요소인 경우 내부 텍스트만 처리
+          const children = node.props.children;
+          if (typeof children === 'string') {
+            const parts = children.split(regex);
+            const newChildren = parts.map((part, i) => {
+              const isMatch = part.toLowerCase() === term.toLowerCase();
+              if (isMatch) {
+                return (
+                  <span 
+                    key={`nested-term-${termIndex}-${i}`}
+                    className="search-highlight bg-yellow-200 text-yellow-900 font-bold px-0.5 rounded"
+                  >
+                    {part}
+                  </span>
+                );
+              }
+              return part;
+            });
+            return React.cloneElement(node, { key: node.key || `wrapper-${termIndex}` }, newChildren);
+          } else if (Array.isArray(children)) {
+            const newChildren = children.map((child, idx) => {
+              if (typeof child === 'string') {
+                const parts = child.split(regex);
+                return parts.map((part, i) => {
+                  const isMatch = part.toLowerCase() === term.toLowerCase();
+                  if (isMatch) {
+                    return (
+                      <span 
+                        key={`array-term-${termIndex}-${idx}-${i}`}
+                        className="search-highlight bg-yellow-200 text-yellow-900 font-bold px-0.5 rounded"
+                      >
+                        {part}
+                      </span>
+                    );
+                  }
+                  return part;
+                });
+              }
+              return processNode(child);
+            });
+            return React.cloneElement(node, { key: node.key || `wrapper-${termIndex}` }, newChildren);
           }
-        });
-        
-        highlightedText = newParts;
-      });
-    } else {
-      // 하이라이트할 매칭이 없으면 원본 텍스트 반환 (하이라이트 없음)
-      highlightedText = [text];
-    }
+          return node;
+        } else if (Array.isArray(node)) {
+          return node.map((item, idx) => (
+            <React.Fragment key={`fragment-${termIndex}-${idx}`}>
+              {processNode(item)}
+            </React.Fragment>
+          ));
+        }
+        return node;
+      };
+      
+      highlightedText = processNode(highlightedText);
+    });
     
     return <>{highlightedText}</>;
   };
