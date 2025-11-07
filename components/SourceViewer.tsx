@@ -225,13 +225,20 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
       }
     }
     
-    // 2단계: 문장 하이라이트와 단어 하이라이트를 결합
+    // 2단계: 6줄 이상인 문장 하이라이트 제외
+    const filteredSentenceMatches = sentenceMatches.filter(match => {
+      const sentenceText = text.substring(match.start, match.end);
+      const lineCount = (sentenceText.match(/\n/g) || []).length + 1; // 줄바꿈 개수 + 1
+      return lineCount < 6; // 6줄 미만만 허용
+    });
+    
+    // 3단계: 문장 하이라이트와 단어 하이라이트를 결합
     let highlightedText: React.ReactNode[] = [];
     let lastIndex = 0;
     
     // 문장 하이라이트가 있는 경우
-    if (sentenceMatches.length > 0) {
-      sentenceMatches.forEach((match, matchIndex) => {
+    if (filteredSentenceMatches.length > 0) {
+      filteredSentenceMatches.forEach((match, matchIndex) => {
         // 문장 이전 텍스트
         if (match.start > lastIndex) {
           const beforeText = text.substring(lastIndex, match.start);
