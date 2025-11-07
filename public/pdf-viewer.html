@@ -907,10 +907,10 @@
               // 모든 검색어를 하이라이트
               for (const query of searchQueries) {
                 if (text.includes(query)) {
-                  // ✅ 현재 선택된 검색 결과인지 확인
+                  // ✅ 현재 선택된 검색 결과인지 확인 (페이지 단위)
                   const isCurrentResult = currentResult && 
                                          currentResult.page === currentPage &&
-                                         currentResult.query === query;
+                                         (currentResult.allQueries || []).includes(query);
                   
                   if (isCurrentResult) {
                     span.classList.add('highlight-current');
@@ -1376,30 +1376,38 @@
             const textLower = fullText.toLowerCase();
             
             if (isMultiSearch) {
-              // ✅ 복수 검색어: 모든 검색어가 포함된 경우만 찾기 (AND 조건)
+              // ✅ 복수 검색어: 모든 검색어가 같은 페이지에 포함된 경우만 찾기 (AND 조건)
               const allKeywordsFound = searchQueries.every(query => 
                 textLower.includes(query)
               );
               
               if (allKeywordsFound) {
-                // 모든 검색어가 포함된 경우, 각 검색어의 모든 위치 찾기
-                let foundAny = false;
+                // ✅ 개선: 모든 검색어가 포함된 페이지를 페이지 단위로 저장
+                // 각 검색어의 첫 번째 위치를 찾아서 저장
+                const firstPositions = {};
+                let minPosition = Infinity;
+                let maxPosition = -1;
+                
                 searchQueries.forEach(query => {
-                  let index = textLower.indexOf(query);
-                  let resultIndex = 0;
-                  
-                  while (index !== -1) {
-                    searchResults.push({
-                      page: pageNum,
-                      index: resultIndex,
-                      query: query, // 어떤 검색어인지 저장
-                      position: index // 텍스트 내 위치
-                    });
-                    resultIndex++;
-                    foundAny = true;
-                    index = textLower.indexOf(query, index + 1);
+                  const index = textLower.indexOf(query);
+                  if (index !== -1) {
+                    firstPositions[query] = index;
+                    minPosition = Math.min(minPosition, index);
+                    maxPosition = Math.max(maxPosition, index + query.length);
                   }
                 });
+                
+                // 페이지 단위 결과 저장 (모든 검색어가 포함된 페이지)
+                searchResults.push({
+                  page: pageNum,
+                  index: 0, // 페이지당 하나의 결과
+                  query: searchQueries.join(' '), // 모든 검색어
+                  position: minPosition, // 첫 번째 검색어 위치
+                  allQueries: searchQueries, // 모든 검색어 목록
+                  positions: firstPositions // 각 검색어의 위치
+                });
+                
+                console.log(`✅ 페이지 ${pageNum}: 모든 검색어 발견 (${searchQueries.length}개 단어)`);
               }
             } else {
               // 단일 검색어: 모든 매칭 위치 찾기
@@ -1435,7 +1443,12 @@
           return a.position - b.position;
         });
         
-        console.log(`✅ 검색 완료: ${searchResults.length}개 결과 발견`);
+        // ✅ 검색 결과 통계
+        const uniquePages = new Set(searchResults.map(r => r.page));
+        const resultCount = isMultiSearch ? uniquePages.size : searchResults.length;
+        const resultType = isMultiSearch ? '페이지' : '결과';
+        
+        console.log(`✅ 검색 완료: ${resultCount}개 ${resultType} 발견 (${searchQueries.length}개 검색어)`);
         
         // 검색 결과 UI 업데이트
         if (searchResults.length > 0) {
@@ -1447,7 +1460,7 @@
         } else {
           searchNav.style.display = 'none';
           alert(isMultiSearch 
-            ? `모든 검색어(${searchQueries.join(', ')})가 포함된 페이지를 찾을 수 없습니다.`
+            ? `모든 검색어(${searchQueries.join(', ')})가 같은 페이지에 포함된 경우를 찾을 수 없습니다.`
             : '검색 결과를 찾을 수 없습니다.'
           );
         }
