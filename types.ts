@@ -26,6 +26,9 @@ export interface ChunkReference {
   refId?: number; // ✅ 참조 ID 추가 (1-based index)
   referencedSentence?: string; // ✅ AI가 실제로 인용한 문장
   referencedSentenceIndex?: number; // ✅ 청크 내에서의 문장 인덱스
+  sentencePageMap?: { [sentenceIndex: number]: number }; // ✅ 문장 인덱스 -> 페이지 번호 매핑
+  sentences?: string[]; // ✅ 청크를 문장으로 분할한 배열
+  pageFromSentenceMap?: number; // ✅ sentencePageMap에서 찾은 페이지 번호
   metadata?: {
     startPos: number;
     endPos: number;
@@ -60,6 +63,8 @@ export interface Chunk {
     endPosition: number;
     originalSize: number;
     documentType?: 'legal' | 'guideline';
+    sentencePageMap?: { [sentenceIndex: number]: number }; // ✅ 문장 인덱스 -> 페이지 번호 매핑
+    sentences?: string[]; // ✅ 청크를 문장으로 분할한 배열
   };
   keywords: string[];
   location: {

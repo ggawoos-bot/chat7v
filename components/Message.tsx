@@ -542,7 +542,8 @@ const Message: React.FC<MessageProps> = ({ message, allMessages = [], messageInd
             keywords: chunk.keywords || [], // ✅ 청크 키워드 (하이라이트용)
             responseText: message.content, // ✅ AI 응답 텍스트 추가 (하이라이트용)
             referenceNumber, // ✅ 참조 번호 추가 (하이라이트용)
-            referencedSentence: chunk.referencedSentence // ✅ AI가 실제로 인용한 문장 추가
+            referencedSentence: chunk.referencedSentence, // ✅ AI가 실제로 인용한 문장 추가
+            pageFromSentenceMap: chunk.pageFromSentenceMap // ✅ sentencePageMap에서 찾은 페이지 번호 (방법 3)
           }
         }));
       }

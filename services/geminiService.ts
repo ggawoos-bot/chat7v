@@ -1026,6 +1026,27 @@ Here is the source material:
       const normalizedCleaned = this.normalizeTextForMatching(cleaned);
       const normalizedChunk = this.normalizeTextForMatching(chunkContent);
       
+      // ✅ 개선: 저장된 sentences 배열 우선 사용 (sentencePageMap 인덱스와 일치)
+      const storedSentences = (chunkRef as any).metadata?.sentences || 
+                              (chunkRef as any).sentences || 
+                              [];
+      const sentencePageMap = (chunkRef as any).metadata?.sentencePageMap || 
+                             (chunkRef as any).sentencePageMap || {};
+      
+      // 저장된 sentences 배열이 있으면 사용, 없으면 청크 내용 분할
+      let chunkSentences: string[] = [];
+      if (storedSentences.length > 0) {
+        chunkSentences = storedSentences;
+        console.log(`✅ 참조 번호 ${refNumber}: 저장된 sentences 배열 사용 (${storedSentences.length}개 문장)`);
+      } else {
+        // 폴백: 청크 내용 분할
+        chunkSentences = chunkContent
+          .split(/[.。!！?？\n]/)
+          .map(s => s.trim())
+          .filter(s => s.length >= 10);
+        console.log(`⚠️ 참조 번호 ${refNumber}: 저장된 sentences 없음, 청크 내용 분할 사용 (${chunkSentences.length}개 문장)`);
+      }
+      
       // 문장이 청크 내용에 포함되어 있는지 확인
       const isIncluded = normalizedChunk.includes(normalizedCleaned);
       
@@ -1036,12 +1057,7 @@ Here is the source material:
         let matchedSentence = '';
         let matchedIndex = -1;
         
-        // 청크 내용을 문장으로 분할하여 유사한 문장 찾기
-        const chunkSentences = chunkContent
-          .split(/[.。!！?？\n]/)
-          .map(s => s.trim())
-          .filter(s => s.length >= 10);
-        
+        // ✅ 개선: 저장된 sentences 배열 사용
         for (let i = 0; i < chunkSentences.length; i++) {
           const chunkSentence = chunkSentences[i];
           const normalizedChunkSentence = this.normalizeTextForMatching(chunkSentence);
@@ -1061,11 +1077,24 @@ Here is the source material:
         }
         
         if (foundMatch) {
+          // ✅ 방법 3: sentencePageMap에서 페이지 정보 가져오기 (부분 매칭 케이스)
+          let pageFromSentenceMap = null;
+          if (matchedIndex >= 0 && sentencePageMap && typeof sentencePageMap === 'object') {
+            pageFromSentenceMap = sentencePageMap[matchedIndex];
+            if (pageFromSentenceMap) {
+              console.log(`✅ 참조 번호 ${refNumber}: 부분 매칭 문장 인덱스 ${matchedIndex} -> 페이지 ${pageFromSentenceMap} (sentencePageMap 사용)`);
+            } else {
+              console.log(`⚠️ 참조 번호 ${refNumber}: sentencePageMap[${matchedIndex}]에 페이지 정보 없음`);
+            }
+          }
+          
           console.log(`✅ 참조 번호 ${refNumber}: 부분 매칭으로 문장 찾음 (인덱스: ${matchedIndex})`);
           return {
             ...chunkRef,
             referencedSentence: matchedSentence,
-            referencedSentenceIndex: matchedIndex
+            referencedSentenceIndex: matchedIndex,
+            // ✅ 추가: 문장 인덱스로 찾은 페이지 정보 (하이브리드 접근)
+            pageFromSentenceMap: pageFromSentenceMap || undefined
           };
         } else {
           console.log(`⚠️ 참조 번호 ${refNumber}: 청크 내용에서 매칭 문장을 찾지 못함`);
@@ -1073,17 +1102,25 @@ Here is the source material:
         }
       }
       
-      // 7. 문장 인덱스 찾기
-      const chunkSentences = chunkContent
-        .split(/[.。!！?？\n]/)
-        .map(s => s.trim())
-        .filter(s => s.length >= 10);
-      
+      // 7. 문장 인덱스 찾기 (저장된 sentences 배열 사용)
       const sentenceIndex = chunkSentences.findIndex(s => {
         const normalized = this.normalizeTextForMatching(s);
         return normalized.includes(normalizedCleaned.substring(0, Math.min(20, normalizedCleaned.length))) ||
                normalizedCleaned.includes(normalized.substring(0, Math.min(20, normalized.length)));
       });
+      
+      // ✅ 방법 3: sentencePageMap에서 페이지 정보 가져오기
+      let pageFromSentenceMap = null;
+      if (sentenceIndex >= 0 && sentencePageMap && typeof sentencePageMap === 'object') {
+        pageFromSentenceMap = sentencePageMap[sentenceIndex];
+        if (pageFromSentenceMap) {
+          console.log(`✅ 참조 번호 ${refNumber}: 문장 인덱스 ${sentenceIndex} -> 페이지 ${pageFromSentenceMap} (sentencePageMap 사용)`);
+        } else {
+          console.log(`⚠️ 참조 번호 ${refNumber}: sentencePageMap[${sentenceIndex}]에 페이지 정보 없음`);
+        }
+      } else if (sentenceIndex >= 0) {
+        console.log(`⚠️ 참조 번호 ${refNumber}: sentencePageMap이 없음 (문장 인덱스: ${sentenceIndex})`);
+      }
       
       console.log(`✅ 참조 번호 ${refNumber}: 문장 추출 성공 (인덱스: ${sentenceIndex >= 0 ? sentenceIndex : 'N/A'})`);
       console.log(`   추출된 문장: ${cleaned.substring(0, 60)}...`);
@@ -1091,7 +1128,9 @@ Here is the source material:
       return {
         ...chunkRef,
         referencedSentence: cleaned.substring(0, 200), // 최대 200자로 제한
-        referencedSentenceIndex: sentenceIndex >= 0 ? sentenceIndex : undefined
+        referencedSentenceIndex: sentenceIndex >= 0 ? sentenceIndex : undefined,
+        // ✅ 추가: 문장 인덱스로 찾은 페이지 정보 (하이브리드 접근)
+        pageFromSentenceMap: pageFromSentenceMap || undefined
       };
     });
 
@@ -1996,6 +2035,9 @@ Here is the source material:
               pageIndex: pageIndex, // 뷰어 인덱스 (PDF.js와 호환)
               logicalPageNumber: logicalPageNumber || pageIndex, // 논리적 페이지 번호
               section: firestoreChunk.metadata.section,
+              // ✅ sentencePageMap과 sentences도 함께 로드 (방법 2)
+              sentencePageMap: firestoreChunk.metadata.sentencePageMap,
+              sentences: firestoreChunk.metadata.sentences,
               position: firestoreChunk.metadata.position,
               startPosition: firestoreChunk.metadata.startPos,
               endPosition: firestoreChunk.metadata.endPos,
@@ -2372,11 +2414,17 @@ Here is the source material:
                 filename: matchingDoc?.filename || chunk.metadata?.source || chunk.location?.document || '',
                 documentFilename: matchingDoc?.filename || '', // ✅ 추가: 별칭
                 refId: index + 1, // ✅ 참조 ID 추가 (1-based index)
+                // ✅ sentencePageMap과 sentences도 함께 전달 (방법 2)
+                sentencePageMap: chunk.metadata?.sentencePageMap,
+                sentences: chunk.metadata?.sentences,
                 metadata: {
                   startPos: chunk.metadata?.startPosition || 0,
                   endPos: chunk.metadata?.endPosition || 0,
                   position: chunk.metadata?.position || 0,
-                  source: matchingDoc?.filename || chunk.metadata?.source || '' // ✅ 추가
+                  source: matchingDoc?.filename || chunk.metadata?.source || '', // ✅ 추가
+                  // ✅ metadata에도 포함 (하위 호환성)
+                  sentencePageMap: chunk.metadata?.sentencePageMap,
+                  sentences: chunk.metadata?.sentences
                 }
               };
             })

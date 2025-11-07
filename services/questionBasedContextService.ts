@@ -982,7 +982,10 @@ export class ContextSelector {
           position: pdfChunk.metadata?.position || 0,
           startPosition: pdfChunk.metadata?.startPos || 0,
           endPosition: pdfChunk.metadata?.endPos || 0,
-          originalSize: pdfChunk.metadata?.originalSize || 0
+          originalSize: pdfChunk.metadata?.originalSize || 0,
+          // ✅ sentencePageMap과 sentences도 함께 로드 (방법 2)
+          sentencePageMap: pdfChunk.metadata?.sentencePageMap,
+          sentences: pdfChunk.metadata?.sentences
         },
         keywords: pdfChunk.keywords || [],
         location: {

@@ -776,6 +776,85 @@ function getPageNumberForChunk(chunkStartPos, chunkEndPos, pagesData) {
   return pageInfo.pageIndex; // 뷰어 인덱스 반환 (기존 동작 유지)
 }
 
+// ✅ 문장-페이지 매핑 생성 함수 (방법 2)
+function createSentencePageMap(chunkContent, chunkStartPos, chunkEndPos, pagesData) {
+  if (!chunkContent || !pagesData || pagesData.length === 0) {
+    return { sentences: [], sentencePageMap: {} };
+  }
+  
+  // 1. 청크를 문장으로 분할
+  const sentences = chunkContent
+    .split(/[.。!！?？\n]/)
+    .map(s => s.trim())
+    .filter(s => s.length >= 10); // 최소 10자 이상 문장만
+  
+  if (sentences.length === 0) {
+    return { sentences: [], sentencePageMap: {} };
+  }
+  
+  // 2. 각 문장의 페이지 정보 매핑
+  const sentencePageMap = {};
+  
+  sentences.forEach((sentence, index) => {
+    // 문장이 청크 내에서의 시작 위치 찾기
+    const sentenceStartInChunk = chunkContent.indexOf(sentence);
+    if (sentenceStartInChunk < 0) {
+      // 정확히 찾지 못한 경우, 부분 매칭 시도
+      const normalizedSentence = normalizeTextForMatching(sentence);
+      for (let i = 0; i < chunkContent.length - normalizedSentence.length; i++) {
+        const chunkPart = normalizeTextForMatching(
+          chunkContent.substring(i, i + Math.min(100, chunkContent.length - i))
+        );
+        if (chunkPart.includes(normalizedSentence.substring(0, Math.min(30, normalizedSentence.length)))) {
+          sentenceStartInChunk = i;
+          break;
+        }
+      }
+    }
+    
+    if (sentenceStartInChunk >= 0) {
+      // 청크 내 상대 위치를 전체 텍스트의 절대 위치로 변환
+      const absolutePosition = chunkStartPos + sentenceStartInChunk;
+      
+      // 해당 위치가 어느 페이지에 속하는지 찾기
+      let foundPage = null;
+      for (const page of pagesData) {
+        if (absolutePosition >= page.startPosition && absolutePosition < page.endPosition) {
+          foundPage = page.pageNumber;
+          break;
+        }
+      }
+      
+      // 위치 기반으로 찾지 못한 경우, 텍스트 매칭으로 폴백
+      if (!foundPage) {
+        const normalizedSentence = normalizeTextForMatching(sentence);
+        for (const page of pagesData) {
+          const normalizedPageText = normalizeTextForMatching(page.text);
+          // 문장의 앞부분(최소 20자)이 페이지에 포함되는지 확인
+          if (normalizedPageText.includes(normalizedSentence.substring(0, Math.min(20, normalizedSentence.length)))) {
+            foundPage = page.pageNumber;
+            break;
+          }
+        }
+      }
+      
+      // 최종 폴백: 청크의 기본 페이지 사용
+      if (!foundPage) {
+        const pageInfo = getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData);
+        foundPage = pageInfo.pageIndex;
+      }
+      
+      sentencePageMap[index] = foundPage || 1;
+    } else {
+      // 문장을 찾지 못한 경우, 청크의 기본 페이지 사용
+      const pageInfo = getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData);
+      sentencePageMap[index] = pageInfo.pageIndex;
+    }
+  });
+  
+  return { sentences, sentencePageMap };
+}
+
 // 스트리밍 청크 처리 (WriteBatch 최적화) - 정확한 페이지 번호 사용
 async function processChunksStreaming(documentId, filename, text, pagesData = []) {
   const chunkSize = 2000;
@@ -838,6 +917,11 @@ async function processChunksStreaming(documentId, filename, text, pagesData = []
       ? getPageInfoForChunk(chunkStartPos, chunkEndPos, pagesData, chunk.trim())
       : { pageIndex: 1, logicalPageNumber: 1 };
     
+    // ✅ 문장-페이지 매핑 생성 (방법 2)
+    const { sentences, sentencePageMap } = pagesData.length > 0
+      ? createSentencePageMap(chunk.trim(), chunkStartPos, chunkEndPos, pagesData)
+      : { sentences: [], sentencePageMap: {} };
+    
     chunkDataList.push({
       documentId: documentId,
       filename: filename,
@@ -851,7 +935,9 @@ async function processChunksStreaming(documentId, filename, text, pagesData = []
         source: 'Direct PDF Processing',
         page: pageInfo.pageIndex, // 뷰어 인덱스 (1-based, PDF.js와 호환)
         pageIndex: pageInfo.pageIndex, // 뷰어 인덱스 (명시적)
-        logicalPageNumber: pageInfo.logicalPageNumber // 논리적 페이지 번호 (문서에 인쇄된 번호)
+        logicalPageNumber: pageInfo.logicalPageNumber, // 논리적 페이지 번호 (문서에 인쇄된 번호)
+        sentences: sentences, // ✅ 문장 배열
+        sentencePageMap: sentencePageMap // ✅ 문장 인덱스 -> 페이지 번호 매핑
       },
       searchableText: chunk.trim().toLowerCase(),
       createdAt: Timestamp.now(),
