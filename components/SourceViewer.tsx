@@ -148,7 +148,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     };
   };
 
-  // 텍스트에서 검색어를 하이라이트 처리하는 함수 (복수 단어 지원)
+  // 텍스트에서 검색어를 하이라이트 처리하는 함수 (복수 단어 지원 + 문장 하이라이트)
   const highlightSearchTerm = (text: string, searchTerm: string) => {
     if (!searchTerm || !text) return text;
 
@@ -176,14 +176,92 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
       });
     }
     
-    // 복수 검색어인 경우: 각 단어를 순차적으로 하이라이트 적용
-    let highlightedText: React.ReactNode[] = [text];
+    // ✅ 복수 검색어인 경우: 문장 단위 하이라이트 추가
+    // 1단계: 문장으로 분할하고 2개 이상의 검색어가 포함된 문장 찾기
+    const sentenceRegex = /([^.。!！?？\n]+[.。!！?？\n]+)/g;
+    const sentenceMatches: { start: number; end: number; sentence: string }[] = [];
+    let match;
     
+    while ((match = sentenceRegex.exec(text)) !== null) {
+      const sentenceText = match[0];
+      const normalizedSentence = sentenceText.toLowerCase();
+      
+      // 문장에 포함된 검색어 개수 확인
+      const matchedTermsCount = searchTerms.filter(term => 
+        normalizedSentence.includes(term.toLowerCase())
+      ).length;
+      
+      // 2개 이상의 검색어가 포함된 경우
+      if (matchedTermsCount >= 2) {
+        sentenceMatches.push({
+          start: match.index,
+          end: match.index + sentenceText.length,
+          sentence: sentenceText
+        });
+      }
+    }
+    
+    // 마지막 문장 처리 (문장 종료 문자가 없는 경우)
+    const lastSentenceStart = sentenceMatches.length > 0 
+      ? sentenceMatches[sentenceMatches.length - 1].end 
+      : 0;
+    if (lastSentenceStart < text.length) {
+      const lastSentence = text.substring(lastSentenceStart);
+      const normalizedLastSentence = lastSentence.toLowerCase();
+      const matchedTermsCount = searchTerms.filter(term => 
+        normalizedLastSentence.includes(term.toLowerCase())
+      ).length;
+      
+      if (matchedTermsCount >= 2) {
+        sentenceMatches.push({
+          start: lastSentenceStart,
+          end: text.length,
+          sentence: lastSentence
+        });
+      }
+    }
+    
+    // 2단계: 문장 하이라이트와 단어 하이라이트를 결합
+    let highlightedText: React.ReactNode[] = [];
+    let lastIndex = 0;
+    
+    // 문장 하이라이트가 있는 경우
+    if (sentenceMatches.length > 0) {
+      sentenceMatches.forEach((match, matchIndex) => {
+        // 문장 이전 텍스트
+        if (match.start > lastIndex) {
+          const beforeText = text.substring(lastIndex, match.start);
+          highlightedText.push(beforeText);
+        }
+        
+        // 문장 전체를 하이라이트 (배경색으로)
+        const sentenceText = text.substring(match.start, match.end);
+        highlightedText.push(
+          <span 
+            key={`sentence-${matchIndex}`}
+            className="search-sentence-highlight bg-yellow-100 px-1 rounded"
+          >
+            {sentenceText}
+          </span>
+        );
+        
+        lastIndex = match.end;
+      });
+      
+      // 마지막 문장 이후 텍스트
+      if (lastIndex < text.length) {
+        highlightedText.push(text.substring(lastIndex));
+      }
+    } else {
+      // 문장 하이라이트가 없으면 원본 텍스트 사용
+      highlightedText = [text];
+    }
+    
+    // 3단계: 개별 단어도 하이라이트 적용 (문장 하이라이트 위에)
     searchTerms.forEach((term, termIndex) => {
       const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = new RegExp(`(${escapedTerm})`, 'gi');
       
-      // 현재까지의 하이라이트 결과를 다시 처리
       const newParts: React.ReactNode[] = [];
       
       highlightedText.forEach((part) => {
@@ -192,11 +270,11 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
           parts.forEach((p, i) => {
             const isMatch = p.toLowerCase() === term.toLowerCase();
             if (isMatch) {
-              // 하이라이트 적용
+              // 하이라이트 적용 (문장 하이라이트 위에 더 진한 색상)
               newParts.push(
                 <span 
                   key={`term-${termIndex}-part-${i}-${newParts.length}`} 
-                  className="search-highlight bg-yellow-200 text-yellow-900 font-medium px-0.5 rounded"
+                  className="search-highlight bg-yellow-300 text-yellow-900 font-bold px-0.5 rounded"
                 >
                   {p}
                 </span>
@@ -205,8 +283,44 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
               newParts.push(p);
             }
           });
+        } else if (React.isValidElement(part)) {
+          // 이미 하이라이트된 부분 (문장 하이라이트)은 내부 텍스트만 처리
+          const children = part.props.children;
+          
+          if (typeof children === 'string') {
+            const parts = children.split(regex);
+            const sentenceParts: React.ReactNode[] = [];
+            
+            parts.forEach((p, i) => {
+              const isMatch = p.toLowerCase() === term.toLowerCase();
+              if (isMatch) {
+                sentenceParts.push(
+                  <span 
+                    key={`sentence-term-${termIndex}-${i}`}
+                    className="search-highlight bg-yellow-300 text-yellow-900 font-bold px-0.5 rounded"
+                  >
+                    {p}
+                  </span>
+                );
+              } else if (p) {
+                sentenceParts.push(p);
+              }
+            });
+            
+            // 문장 하이라이트 안에 단어 하이라이트 포함
+            newParts.push(
+              <span 
+                key={part.key || `sentence-${termIndex}-${newParts.length}`}
+                className={part.props.className}
+              >
+                {sentenceParts}
+              </span>
+            );
+          } else {
+            // children이 string이 아닌 경우 그대로 유지
+            newParts.push(part);
+          }
         } else {
-          // 이미 하이라이트된 부분은 그대로 유지
           newParts.push(part);
         }
       });
