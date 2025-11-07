@@ -184,12 +184,13 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     
     lines.forEach((line) => {
       const normalizedLine = line.toLowerCase();
-      const matchedTermsCount = searchTerms.filter(term => 
+      // ✅ 모든 검색어가 포함되어 있는지 엄격하게 확인
+      const allTermsIncluded = searchTerms.every(term => 
         normalizedLine.includes(term.toLowerCase())
-      ).length;
+      );
       
-      // 2개 이상의 검색어가 포함된 라인만 저장
-      if (matchedTermsCount >= 2) {
+      // 모든 검색어가 포함된 라인만 저장
+      if (allTermsIncluded && searchTerms.length >= 2) {
         lineMatches.push({
           start: charIndex,
           end: charIndex + line.length,
@@ -206,19 +207,21 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     let match;
     
     while ((match = sentenceRegex.exec(text)) !== null) {
-      const sentenceText = match[0];
+      const sentenceText = match[0].trim();
+      if (sentenceText.length < 5) continue; // 너무 짧은 문장은 스킵
+      
       const normalizedSentence = sentenceText.toLowerCase();
       
-      // 문장에 포함된 검색어 개수 확인
-      const matchedTermsCount = searchTerms.filter(term => 
+      // ✅ 모든 검색어가 포함되어 있는지 엄격하게 확인
+      const allTermsIncluded = searchTerms.every(term => 
         normalizedSentence.includes(term.toLowerCase())
-      ).length;
+      );
       
-      // 2개 이상의 검색어가 포함된 경우
-      if (matchedTermsCount >= 2) {
+      // 모든 검색어가 포함된 경우만 저장
+      if (allTermsIncluded && searchTerms.length >= 2) {
         sentenceMatches.push({
           start: match.index,
-          end: match.index + sentenceText.length,
+          end: match.index + match[0].length,
           sentence: sentenceText
         });
       }
@@ -229,45 +232,81 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
       ? sentenceMatches[sentenceMatches.length - 1].end 
       : 0;
     if (lastSentenceStart < text.length) {
-      const lastSentence = text.substring(lastSentenceStart);
-      const normalizedLastSentence = lastSentence.toLowerCase();
-      const matchedTermsCount = searchTerms.filter(term => 
-        normalizedLastSentence.includes(term.toLowerCase())
-      ).length;
-      
-      if (matchedTermsCount >= 2) {
-        sentenceMatches.push({
-          start: lastSentenceStart,
-          end: text.length,
-          sentence: lastSentence
-        });
+      const lastSentence = text.substring(lastSentenceStart).trim();
+      if (lastSentence.length >= 5) {
+        const normalizedLastSentence = lastSentence.toLowerCase();
+        const allTermsIncluded = searchTerms.every(term => 
+          normalizedLastSentence.includes(term.toLowerCase())
+        );
+        
+        if (allTermsIncluded && searchTerms.length >= 2) {
+          sentenceMatches.push({
+            start: lastSentenceStart,
+            end: text.length,
+            sentence: lastSentence
+          });
+        }
       }
     }
     
-    // 3단계: 라인 매칭과 문장 매칭을 합쳐서 최종 매칭 범위 결정
+    // 3단계: 라인 매칭과 문장 매칭을 합치되, 더 작은 범위를 우선
+    // ✅ 개선: 겹치는 경우 더 작은 범위를 유지하도록 변경
     const allMatches = [
-      ...lineMatches.map(l => ({ start: l.start, end: l.end, text: l.line })),
-      ...sentenceMatches.map(s => ({ start: s.start, end: s.end, text: s.sentence }))
+      ...lineMatches.map(l => ({ start: l.start, end: l.end, text: l.line, size: l.end - l.start })),
+      ...sentenceMatches.map(s => ({ start: s.start, end: s.end, text: s.sentence, size: s.end - s.start }))
     ];
     
-    // 중복 제거 및 정렬 (겹치는 범위는 하나로 합침)
-    const sortedMatches = allMatches.sort((a, b) => a.start - b.start);
+    // ✅ 개선: 겹치는 범위 처리 - 더 작은 범위를 우선하고, 완전히 포함되는 경우만 제거
+    const sortedMatches = allMatches.sort((a, b) => {
+      if (a.start !== b.start) return a.start - b.start;
+      // 같은 시작 위치면 더 작은 범위를 우선
+      return a.size - b.size;
+    });
+    
     const uniqueMatches: { start: number; end: number; text: string }[] = [];
     
     sortedMatches.forEach(match => {
-      if (uniqueMatches.length === 0) {
-        uniqueMatches.push(match);
-      } else {
-        const lastMatch = uniqueMatches[uniqueMatches.length - 1];
-        // 겹치거나 인접한 경우 합침
-        if (match.start <= lastMatch.end) {
-          lastMatch.end = Math.max(lastMatch.end, match.end);
-          lastMatch.text = text.substring(lastMatch.start, lastMatch.end);
-        } else {
-          uniqueMatches.push(match);
+      // ✅ 기존 매칭과 겹치지 않거나, 완전히 포함되지 않는 경우만 추가
+      let shouldAdd = true;
+      
+      for (let i = uniqueMatches.length - 1; i >= 0; i--) {
+        const existing = uniqueMatches[i];
+        
+        // 완전히 포함되는 경우 제외
+        if (match.start >= existing.start && match.end <= existing.end) {
+          shouldAdd = false;
+          break;
+        }
+        
+        // 기존 매칭을 완전히 포함하는 경우 기존 것을 제거하고 새 것으로 교체
+        if (match.start <= existing.start && match.end >= existing.end) {
+          uniqueMatches.splice(i, 1);
+          continue;
+        }
+        
+        // 부분적으로 겹치는 경우 - 더 작은 범위를 유지
+        if (match.start < existing.end && match.end > existing.start) {
+          const matchSize = match.end - match.start;
+          const existingSize = existing.end - existing.start;
+          if (matchSize < existingSize) {
+            // 더 작은 범위로 교체
+            uniqueMatches.splice(i, 1);
+            continue;
+          } else {
+            // 기존 것이 더 작으면 추가하지 않음
+            shouldAdd = false;
+            break;
+          }
         }
       }
+      
+      if (shouldAdd) {
+        uniqueMatches.push(match);
+      }
     });
+    
+    // ✅ 최종 정렬
+    uniqueMatches.sort((a, b) => a.start - b.start);
     
     // 4단계: 매칭된 라인/문장 하이라이트와 단어 하이라이트를 결합
     let highlightedText: React.ReactNode[] = [];
