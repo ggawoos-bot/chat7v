@@ -220,6 +220,7 @@
       border: 1px solid rgba(255, 200, 0, 0.6); /* ✅ 더 진하게 (0.3 → 0.6) */
       border-radius: 2px;
       padding: 1px 2px;
+      color: #000 !important; /* ✅ 어두운 텍스트 색상으로 대비 개선 */
     }
     
     .textLayer .highlight-strong {
@@ -228,6 +229,7 @@
       border-radius: 3px;
       padding: 2px 3px;
       font-weight: normal; /* ✅ bold 제거하여 글씨 가독성 향상 */
+      color: #000 !important; /* ✅ 어두운 텍스트 색상으로 대비 개선 */
     }
     
     .textLayer .highlight-current {
@@ -899,33 +901,96 @@
           const isMultiSearch = searchQueries.length > 1;
           
           if (isMultiSearch) {
-            // ✅ 복수 검색어: 각 검색어를 모두 하이라이트 (AND 조건 - 모든 검색어 포함)
-            textSpans.forEach((span, spanIndex) => {
-              const text = normalizeTextForMatching(span.textContent || '');
-              if (!text.trim()) return;
-              
-              // 모든 검색어를 하이라이트
-              for (const query of searchQueries) {
-                if (text.includes(query)) {
-                  // ✅ 현재 선택된 검색 결과인지 확인 (페이지 단위)
-                  const isCurrentResult = currentResult && 
-                                         currentResult.page === currentPage &&
-                                         (currentResult.allQueries || []).includes(query);
-                  
-                  if (isCurrentResult) {
-                    span.classList.add('highlight-current');
-                  } else {
-                    span.classList.add('highlight-strong');
-                  }
-                  highlightCount++;
-                  break; // 하나만 찾으면 충분 (중복 방지)
-                }
-              }
-            });
+            // ✅ 복수 검색어: 문장 단위로 그룹화하여 2개 이상의 검색어가 포함된 문장만 하이라이트
+            // 1단계: 모든 span의 텍스트를 순서대로 합쳐서 전체 텍스트 구성
+            const allText = Array.from(textSpans).map(s => s.textContent || '').join('');
             
-            if (highlightCount > 0) {
-              console.log(`✅ 복수 검색어 하이라이트 적용 완료: ${highlightCount}개 요소 (${searchQueries.length}개 검색어)`);
+            // 2단계: 문장으로 분할하고 2개 이상의 검색어가 포함된 문장 찾기
+            const sentenceRegex = /([^.。!！?？\n]+[.。!！?？\n]+)/g;
+            const sentenceMatches = [];
+            let match;
+            
+            while ((match = sentenceRegex.exec(allText)) !== null) {
+              const sentenceText = match[0];
+              const normalizedSentence = normalizeTextForMatching(sentenceText);
+              
+              // 문장에 포함된 검색어 개수 확인
+              const matchedTermsCount = searchQueries.filter(query => 
+                normalizedSentence.includes(query)
+              ).length;
+              
+              // 2개 이상의 검색어가 포함된 경우만 저장
+              if (matchedTermsCount >= 2) {
+                sentenceMatches.push({
+                  start: match.index,
+                  end: match.index + sentenceText.length,
+                  sentence: sentenceText
+                });
+              }
+            }
+            
+            // 마지막 문장 처리 (문장 종료 문자가 없는 경우)
+            const lastSentenceStart = sentenceMatches.length > 0 
+              ? sentenceMatches[sentenceMatches.length - 1].end 
+              : 0;
+            if (lastSentenceStart < allText.length) {
+              const lastSentence = allText.substring(lastSentenceStart);
+              const normalizedLastSentence = normalizeTextForMatching(lastSentence);
+              const matchedTermsCount = searchQueries.filter(query => 
+                normalizedLastSentence.includes(query)
+              ).length;
+              
+              if (matchedTermsCount >= 2) {
+                sentenceMatches.push({
+                  start: lastSentenceStart,
+                  end: allText.length,
+                  sentence: lastSentence
+                });
+              }
+            }
+            
+            // 3단계: 문장에 속한 span들을 찾아서 하이라이트
+            if (sentenceMatches.length > 0) {
+              // span들의 문자 위치 계산
+              let charIndex = 0;
+              const spanPositions = [];
+              
+              Array.from(textSpans).forEach((span) => {
+                const spanText = span.textContent || '';
+                const spanLength = spanText.length;
+                spanPositions.push({
+                  span: span,
+                  start: charIndex,
+                  end: charIndex + spanLength
+                });
+                charIndex += spanLength;
+              });
+              
+              // 각 문장에 속한 span들 찾기
+              sentenceMatches.forEach((sentenceMatch) => {
+                spanPositions.forEach((spanPos) => {
+                  // span이 문장 범위와 겹치면 하이라이트
+                  if (spanPos.start < sentenceMatch.end && spanPos.end > sentenceMatch.start) {
+                    // ✅ 현재 선택된 검색 결과인지 확인
+                    const isCurrentResult = currentResult && 
+                                           currentResult.page === currentPage;
+                    
+                    if (isCurrentResult) {
+                      spanPos.span.classList.add('highlight-current');
+                    } else {
+                      spanPos.span.classList.add('highlight-strong');
+                    }
+                    highlightCount++;
+                  }
+                });
+              });
+              
+              // 4단계: 문장 하이라이트 완료 (개별 단어는 문장 하이라이트 내에서 자동으로 포함됨)
+              
+              console.log(`✅ 복수 검색어 문장 단위 하이라이트 적용 완료: ${highlightCount}개 span (${sentenceMatches.length}개 문장)`);
               return; // 검색 텍스트로 하이라이트했으면 키워드 하이라이트는 스킵
+            } else {
+              console.log(`⚠️ 2개 이상의 검색어가 포함된 문장을 찾을 수 없음`);
             }
           } else {
             // ✅ 개선된 방식: 단일 검색어 - 정확한 매칭 우선 + 단어 순서 고려
@@ -1333,12 +1398,12 @@
         return;
       }
       
-      // ✅ 개선: 공백으로 구분된 검색어 파싱 (AND 조건)
+      // ✅ 개선: 공백으로 구분된 검색어 파싱 (AND 조건) + 텍스트 정규화
       const searchQueries = searchText
         .split(/\s+/) // 공백(연속 공백 포함)으로 분할
         .map(q => q.trim())
         .filter(q => q.length > 0)
-        .map(q => q.toLowerCase());
+        .map(q => normalizeTextForMatching(q)); // ✅ 텍스트 정규화 적용
       
       // 단일 검색어인지 복수 검색어인지 확인
       const isMultiSearch = searchQueries.length > 1;
@@ -1373,12 +1438,13 @@
               }
             });
             
-            const textLower = fullText.toLowerCase();
+            // ✅ 개선: PDF 텍스트도 정규화
+            const normalizedText = normalizeTextForMatching(fullText);
             
             if (isMultiSearch) {
               // ✅ 복수 검색어: 모든 검색어가 같은 페이지에 포함된 경우만 찾기 (AND 조건)
               const allKeywordsFound = searchQueries.every(query => 
-                textLower.includes(query)
+                normalizedText.includes(query)
               );
               
               if (allKeywordsFound) {
@@ -1389,7 +1455,7 @@
                 let maxPosition = -1;
                 
                 searchQueries.forEach(query => {
-                  const index = textLower.indexOf(query);
+                  const index = normalizedText.indexOf(query);
                   if (index !== -1) {
                     firstPositions[query] = index;
                     minPosition = Math.min(minPosition, index);
@@ -1412,7 +1478,7 @@
             } else {
               // 단일 검색어: 모든 매칭 위치 찾기
               const query = searchQueries[0];
-              let index = textLower.indexOf(query);
+              let index = normalizedText.indexOf(query);
               let resultIndex = 0;
               
               while (index !== -1) {
@@ -1423,7 +1489,7 @@
                   position: index
                 });
                 resultIndex++;
-                index = textLower.indexOf(query, index + 1);
+                index = normalizedText.indexOf(query, index + 1);
               }
             }
           } catch (error) {
