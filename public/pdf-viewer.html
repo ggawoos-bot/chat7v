@@ -486,8 +486,19 @@
               applyHighlight(textLayerDiv, highlightKeywords, highlightText, -1);
             }
             
-            // 하이라이트 위치로 스크롤 (즉시)
-            scrollToHighlight(textLayerDiv);
+            // ✅ 하이라이트 위치로 스크롤 (여러 번 시도하여 확실히 보이도록)
+            scrollToHighlight(textLayerDiv, 0);
+            
+            // ✅ 추가 시도: DOM 업데이트가 늦을 수 있으므로
+            setTimeout(() => {
+              scrollToHighlight(textLayerDiv, 1);
+            }, 500);
+            
+            // ✅ 최종 시도: 확실히 보이도록
+            setTimeout(() => {
+              scrollToHighlight(textLayerDiv, 2);
+            }, 1000);
+            
             console.log(`✅ 페이지 ${num} 렌더링 및 하이라이트 완료`);
           }, 300); // 500ms에서 300ms로 단축하여 더 빠른 반응
           
@@ -1240,23 +1251,78 @@
       console.log(`✅ 하이라이트 적용 완료: ${highlightCount}개 요소`);
     }
     
-    // 하이라이트된 요소로 스크롤 (즉시 실행)
-    function scrollToHighlight(textLayer) {
+    // 하이라이트된 요소로 스크롤 (좌측 텍스트뷰와 동일한 로직)
+    function scrollToHighlight(textLayer, attempt = 0) {
       // ✅ 현재 선택된 항목 우선, 없으면 일반 하이라이트
       const highlighted = textLayer.querySelector('.highlight-current, .highlight-strong, .highlight');
-      if (highlighted) {
+      
+      if (!highlighted) {
+        // 하이라이트가 없으면 재시도
+        if (attempt < 3) {
+          setTimeout(() => scrollToHighlight(textLayer, attempt + 1), 200);
+        } else {
+          viewerWrapper.scrollTop = 0;
+          console.log('📍 하이라이트 없음, 페이지 상단으로 스크롤');
+        }
+        return;
+      }
+      
+      // ✅ 요소가 화면에 보이는지 확인하는 함수
+      const isElementVisible = (element, container) => {
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        
+        // 요소가 컨테이너의 가시 영역 내에 있는지 확인 (일부만 보여도 true)
+        return (
+          elementRect.top < containerRect.bottom &&
+          elementRect.bottom > containerRect.top &&
+          elementRect.left < containerRect.right &&
+          elementRect.right > containerRect.left
+        );
+      };
+      
+      // ✅ 요소가 화면에 보이는지 확인
+      const isVisible = isElementVisible(highlighted, viewerWrapper);
+      
+      if (!isVisible || attempt === 0) {
         console.log('📍 하이라이트 위치로 스크롤 중...');
-        // 즉시 스크롤 (smooth 대신 auto로 변경하여 더 빠른 반응)
-        highlighted.scrollIntoView({ 
-          behavior: 'auto', // 'smooth'에서 'auto'로 변경하여 즉시 스크롤
-          block: 'center',
-          inline: 'nearest'
-        });
-        console.log('✅ 하이라이트 위치로 스크롤 완료');
+        
+        // ✅ 즉시 스크롤 (smooth가 실패할 수 있으므로)
+        const containerRect = viewerWrapper.getBoundingClientRect();
+        const elementRect = highlighted.getBoundingClientRect();
+        const scrollTop = viewerWrapper.scrollTop;
+        
+        // ✅ 요소가 컨테이너의 중앙에 오도록 스크롤 계산 (여유 공간 추가)
+        const offset = 50; // 상하 여유 공간
+        const targetScrollTop = scrollTop + elementRect.top - containerRect.top - (containerRect.height / 2) + (elementRect.height / 2) - offset;
+        
+        // 즉시 스크롤
+        viewerWrapper.scrollTop = targetScrollTop;
+        
+        // ✅ 스크롤 후 다시 확인하여 확실히 보이도록 함
+        setTimeout(() => {
+          const newElementRect = highlighted.getBoundingClientRect();
+          const newContainerRect = viewerWrapper.getBoundingClientRect();
+          const isNowVisible = (
+            newElementRect.top < newContainerRect.bottom &&
+            newElementRect.bottom > newContainerRect.top
+          );
+          
+          if (!isNowVisible && attempt < 2) {
+            // 여전히 보이지 않으면 다시 시도
+            scrollToHighlight(textLayer, attempt + 1);
+          } else {
+            // ✅ 부드러운 스크롤로 최종 조정
+            viewerWrapper.scrollTo({
+              top: viewerWrapper.scrollTop,
+              behavior: 'smooth'
+            });
+            console.log('✅ 하이라이트 위치로 스크롤 완료');
+          }
+        }, 100);
       } else {
-        // 하이라이트가 없으면 페이지 상단으로 스크롤
-        viewerWrapper.scrollTop = 0;
-        console.log('📍 하이라이트 없음, 페이지 상단으로 스크롤');
+        // 이미 보이는 경우
+        console.log('✅ 하이라이트가 이미 화면에 보입니다');
       }
     }
     
@@ -1414,7 +1480,16 @@
         if (textLayerDiv) {
           setTimeout(() => {
             applyHighlight(textLayerDiv, [], currentSearchText, index);
-            scrollToHighlight(textLayerDiv);
+            // ✅ 여러 번 시도하여 확실히 보이도록
+            scrollToHighlight(textLayerDiv, 0);
+            
+            setTimeout(() => {
+              scrollToHighlight(textLayerDiv, 1);
+            }, 500);
+            
+            setTimeout(() => {
+              scrollToHighlight(textLayerDiv, 2);
+            }, 1000);
           }, 300);
         }
       }

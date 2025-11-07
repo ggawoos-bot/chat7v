@@ -509,50 +509,120 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     suppressObserverRef.current = true;
     if (onPdfPageChange) onPdfPageChange(targetPage);
     
+    // ✅ 요소가 화면에 보이는지 확인하는 함수
+    const isElementVisible = (element: HTMLElement, container: HTMLElement): boolean => {
+      const containerRect = container.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      
+      // 요소가 컨테이너의 가시 영역 내에 있는지 확인 (일부만 보여도 true)
+      return (
+        elementRect.top < containerRect.bottom &&
+        elementRect.bottom > containerRect.top &&
+        elementRect.left < containerRect.right &&
+        elementRect.right > containerRect.left
+      );
+    };
+    
     // 페이지 변경 후 DOM 업데이트를 기다린 후 스크롤
-    const scrollToMatch = () => {
+    const scrollToMatch = (attempt: number = 0) => {
       const el = window.document.getElementById(`chunk-${match.id}`);
       const container = scrollContainerRef.current;
       
-      if (el && container) {
-        // 스크롤 컨테이너 내에서 요소의 위치 계산
-        const containerRect = container.getBoundingClientRect();
-        const elementRect = el.getBoundingClientRect();
-        const scrollTop = container.scrollTop;
-        
-        // 요소가 컨테이너의 중앙에 오도록 스크롤 계산
-        const targetScrollTop = scrollTop + elementRect.top - containerRect.top - (containerRect.height / 2) + (elementRect.height / 2);
-        
-        // 부드럽게 스크롤
-        container.scrollTo({
-          top: targetScrollTop,
-          behavior: 'smooth'
-        });
-        
-        // 하이라이트 효과 제거 (텍스트 색상 변경으로만 표시)
-        
-        // 스크롤 완료 후 observer 재개
-        setTimeout(() => {
+      if (!el) {
+        // 요소를 찾지 못한 경우 재시도
+        if (attempt < 3) {
+          setTimeout(() => scrollToMatch(attempt + 1), 200);
+        } else {
           suppressObserverRef.current = false;
-        }, 500);
+        }
+        return;
+      }
+      
+      if (container) {
+        // ✅ 요소가 화면에 보이는지 확인
+        const isVisible = isElementVisible(el, container);
+        
+        if (!isVisible || attempt === 0) {
+          // 요소가 가려져 있거나 첫 시도인 경우 스크롤
+          const containerRect = container.getBoundingClientRect();
+          const elementRect = el.getBoundingClientRect();
+          const scrollTop = container.scrollTop;
+          
+          // ✅ 요소가 컨테이너의 중앙에 오도록 스크롤 계산 (여유 공간 추가)
+          const offset = 50; // 상하 여유 공간
+          const targetScrollTop = scrollTop + elementRect.top - containerRect.top - (containerRect.height / 2) + (elementRect.height / 2) - offset;
+          
+          // ✅ 즉시 스크롤 (smooth가 실패할 수 있으므로)
+          container.scrollTop = targetScrollTop;
+          
+          // ✅ 스크롤 후 다시 확인하여 확실히 보이도록 함
+          setTimeout(() => {
+            const newElementRect = el.getBoundingClientRect();
+            const newContainerRect = container.getBoundingClientRect();
+            const isNowVisible = (
+              newElementRect.top < newContainerRect.bottom &&
+              newElementRect.bottom > newContainerRect.top
+            );
+            
+            if (!isNowVisible && attempt < 2) {
+              // 여전히 보이지 않으면 다시 시도
+              scrollToMatch(attempt + 1);
+            } else {
+              // ✅ 부드러운 스크롤로 최종 조정
+              container.scrollTo({
+                top: container.scrollTop,
+                behavior: 'smooth'
+              });
+              
+              // 스크롤 완료 후 observer 재개
+              setTimeout(() => {
+                suppressObserverRef.current = false;
+              }, 500);
+            }
+          }, 100);
+        } else {
+          // 이미 보이는 경우 observer만 재개
+          suppressObserverRef.current = false;
+        }
       } else if (el) {
         // scrollContainerRef가 없으면 기본 방법 사용
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // ✅ 더 확실한 스크롤을 위해 여러 옵션 시도
+        el.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'center',
+          inline: 'nearest'
+        });
+        
+        // ✅ 추가 확인: scrollIntoView가 실패할 수 있으므로 직접 스크롤도 시도
+        setTimeout(() => {
+          const parent = el.offsetParent as HTMLElement;
+          if (parent) {
+            const elementTop = el.offsetTop;
+            const parentHeight = parent.clientHeight;
+            const scrollTop = elementTop - (parentHeight / 2) + (el.offsetHeight / 2);
+            parent.scrollTop = scrollTop;
+          }
+        }, 300);
+        
         suppressObserverRef.current = false;
       }
     };
     
-    // 페이지 변경 후 충분한 시간을 기다려서 DOM이 업데이트되도록 함
+    // ✅ 페이지 변경 후 충분한 시간을 기다려서 DOM이 업데이트되도록 함
+    // 여러 번 시도하여 확실히 스크롤
     setTimeout(() => {
-      scrollToMatch();
-      // 만약 첫 번째 시도에서 요소를 찾지 못하면 추가 시도
-      setTimeout(() => {
-        const el = window.document.getElementById(`chunk-${match.id}`);
-        if (el && scrollContainerRef.current) {
-          scrollToMatch();
-        }
-      }, 200);
+      scrollToMatch(0);
     }, 400);
+    
+    // ✅ 추가 시도: DOM 업데이트가 늦을 수 있으므로
+    setTimeout(() => {
+      scrollToMatch(1);
+    }, 800);
+    
+    // ✅ 최종 시도: 확실히 보이도록
+    setTimeout(() => {
+      scrollToMatch(2);
+    }, 1200);
   };
 
   // 간단 검색: 텍스트 포함 청크를 찾아 해당 페이지로 이동 후 스크롤
