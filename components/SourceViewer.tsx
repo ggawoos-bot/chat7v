@@ -308,13 +308,20 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     // ✅ 최종 정렬
     uniqueMatches.sort((a, b) => a.start - b.start);
     
+    // ✅ 6줄 이상인 매칭 제외
+    const filteredMatches = uniqueMatches.filter(match => {
+      const matchText = text.substring(match.start, match.end);
+      const lineCount = (matchText.match(/\n/g) || []).length + 1; // 줄바꿈 개수 + 1
+      return lineCount < 6; // 6줄 미만만 허용
+    });
+    
     // 4단계: 매칭된 라인/문장 하이라이트와 단어 하이라이트를 결합
     let highlightedText: React.ReactNode[] = [];
     let lastIndex = 0;
     
     // 하이라이트할 매칭이 있는 경우만 처리
-    if (uniqueMatches.length > 0) {
-      uniqueMatches.forEach((match, matchIndex) => {
+    if (filteredMatches.length > 0) {
+      filteredMatches.forEach((match, matchIndex) => {
         // 매칭 이전 텍스트
         if (match.start > lastIndex) {
           const beforeText = text.substring(lastIndex, match.start);
