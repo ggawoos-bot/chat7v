@@ -267,7 +267,7 @@ function App() {
   };
   
   /**
-   * PDF에서 문장을 검색하여 정확한 페이지 찾기 (주변 3페이지 집중 분석 + 단어 단위 매칭)
+   * PDF에서 문장을 검색하여 정확한 페이지 찾기 (주변 5페이지 집중 분석 + 단어 단위 매칭)
    * 청크가 페이지 경계에 걸쳐있는 경우를 대비한 개선된 버전
    */
   const findExactPageInPDF = async (
@@ -276,7 +276,7 @@ function App() {
     fallbackPage: number
   ): Promise<number> => {
     try {
-      console.log('🔍 PDF에서 정확한 페이지 검색 시작 (주변 3페이지 분석 + 단어 매칭):', {
+      console.log('🔍 PDF에서 정확한 페이지 검색 시작 (주변 5페이지 분석 + 단어 매칭):', {
         searchSentence: searchSentence.substring(0, 50),
         fallbackPage
       });
@@ -295,25 +295,76 @@ function App() {
         return fallbackPage;
       }
 
-      // ✅ 개선: PDF.js Worker 설정 (CDN 실패 시 로컬 폴백)
+      // ✅ 개선: PDF.js Worker 설정 (여러 CDN 시도)
       try {
         if (window.pdfjsLib && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
-          // CDN 경로 설정
-          const cdnWorkerUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.296/pdf.worker.min.js';
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = cdnWorkerUrl;
-          console.log('✅ PDF.js Worker 설정:', cdnWorkerUrl);
+          // 여러 CDN 경로 시도 (우선순위 순)
+          const workerUrls = [
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.296/pdf.worker.min.js',
+            'https://unpkg.com/pdfjs-dist@5.4.296/build/pdf.worker.min.js',
+            'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.296/build/pdf.worker.min.js'
+          ];
+          
+          // 첫 번째 CDN 설정
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrls[0];
+          console.log('✅ PDF.js Worker 설정 (CDN):', workerUrls[0]);
         }
       } catch (error) {
         console.warn('⚠️ PDF.js Worker 설정 실패:', error);
         // Worker 없이도 기본 기능은 작동하므로 계속 진행
       }
 
-      // PDF.js로 PDF 로드
-      const loadingTask = window.pdfjsLib.getDocument({
-        url: pdfUrl,
-        verbosity: 0
-      });
-      const pdf = await loadingTask.promise;
+      // PDF.js로 PDF 로드 (Worker 실패 시 재시도)
+      let pdf;
+      try {
+        const loadingTask = window.pdfjsLib.getDocument({
+          url: pdfUrl,
+          verbosity: 0
+        });
+        pdf = await loadingTask.promise;
+      } catch (error) {
+        // Worker 로딩 실패인 경우 다른 CDN 시도
+        if (error.message && (error.message.includes('worker') || error.message.includes('Failed to fetch'))) {
+          console.warn('⚠️ 첫 번째 CDN 실패, 대체 CDN 시도:', error.message);
+          try {
+            // 대체 CDN 시도
+            const alternativeUrls = [
+              'https://unpkg.com/pdfjs-dist@5.4.296/build/pdf.worker.min.js',
+              'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.296/build/pdf.worker.min.js'
+            ];
+            
+            for (const altUrl of alternativeUrls) {
+              try {
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc = altUrl;
+                console.log('🔄 대체 CDN 시도:', altUrl);
+                
+                const loadingTask2 = window.pdfjsLib.getDocument({
+                  url: pdfUrl,
+                  verbosity: 0
+                });
+                pdf = await loadingTask2.promise;
+                console.log('✅ 대체 CDN으로 PDF 로드 성공');
+                break;
+              } catch (retryError) {
+                console.warn('⚠️ 대체 CDN 실패:', altUrl, retryError.message);
+                continue;
+              }
+            }
+            
+            if (!pdf) {
+              console.error('❌ 모든 CDN 실패, fallback 페이지 사용');
+              return fallbackPage;
+            }
+          } catch (error2) {
+            console.error('❌ PDF 로드 재시도 실패, fallback 페이지 사용:', error2);
+            return fallbackPage;
+          }
+        } else {
+          // Worker 외의 다른 오류
+          console.error('❌ PDF 로드 실패, fallback 페이지 사용:', error);
+          return fallbackPage;
+        }
+      }
       
       // 참조 문장 정규화 (매칭 정확도 향상)
       const normalizedSearch = normalizeTextForSearch(searchSentence);
