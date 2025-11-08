@@ -164,8 +164,22 @@ export const TooltipProvider: React.FC<{ children: React.ReactNode }> = ({ child
             onMouseEnter={handleTooltipMouseEnter}
             onMouseLeave={handleTooltipMouseLeave}
           >
-            <div className="text-sm font-semibold text-gray-800 mb-3 border-b pb-2 sticky top-0 bg-white">
-              {tooltipContent.title}
+            <div className="text-sm font-semibold text-gray-800 mb-3 border-b pb-2 sticky top-0 bg-white flex items-center justify-between">
+              <span className="flex-1">{tooltipContent.title}</span>
+              <button
+                onClick={() => {
+                  if (tooltipRef) {
+                    hideTooltip(tooltipRef, 0);
+                  }
+                }}
+                className="ml-2 p-1 rounded hover:bg-gray-200 transition-colors flex-shrink-0"
+                title="닫기"
+                aria-label="닫기"
+              >
+                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
             <div 
               className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap"
