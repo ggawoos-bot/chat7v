@@ -534,13 +534,13 @@
       const textSpans = textLayer.querySelectorAll('span');
       let highlightCount = 0;
       
-      // ✅ 1단계: 검색 텍스트로 정확한 매칭 (콤마 구분 검색어 지원)
+      // ✅ 1단계: 검색 텍스트로 정확한 매칭 (공백 구분 검색어 지원)
       if (searchText && searchText.trim().length > 0) {
-        // ✅ 콤마로 구분된 검색어 파싱
+        // ✅ 공백으로 구분된 검색어 파싱
         const searchQueries = searchText
-          .split(',')
+          .split(/\s+/) // 공백(연속 공백 포함)으로 분할
           .map(q => q.trim())
-          .filter(q => q.length >= 3) // 최소 3자 이상
+          .filter(q => q.length >= 2) // 최소 2자 이상
           .map(q => q.toLowerCase());
         
         if (searchQueries.length > 0) {
@@ -696,9 +696,9 @@
         return;
       }
       
-      // ✅ 콤마로 구분된 검색어 파싱
+      // ✅ 공백으로 구분된 검색어 파싱 (AND 조건)
       const searchQueries = searchText
-        .split(',')
+        .split(/\s+/) // 공백(연속 공백 포함)으로 분할
         .map(q => q.trim())
         .filter(q => q.length > 0)
         .map(q => q.toLowerCase());
@@ -779,7 +779,7 @@
         } else {
           searchNav.style.display = 'none';
           alert(isMultiSearch 
-            ? `모든 검색어(${searchQueries.join(', ')})가 포함된 페이지를 찾을 수 없습니다.`
+            ? `모든 검색어(${searchQueries.join(' ')})가 포함된 페이지를 찾을 수 없습니다.`
             : '검색 결과를 찾을 수 없습니다.'
           );
         }
