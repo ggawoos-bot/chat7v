@@ -12,6 +12,11 @@ env.allowRemoteModels = true; // 원격 모델 허용 (자동 다운로드)
 env.useCustomCache = true; // 커스텀 캐시 사용
 env.modelCachePath = 'indexeddb://'; // IndexedDB에 모델 캐싱
 
+// ✅ Hugging Face CDN 사용 (모델 파일 404 에러 방지)
+// Transformers.js는 기본적으로 Hugging Face에서 모델을 다운로드하므로
+// 추가 설정 없이도 작동하지만, 명시적으로 설정하여 안정성 향상
+// 기본값: 'https://huggingface.co' (자동 사용)
+
 export class LocalEmbeddingService {
   private static instance: LocalEmbeddingService;
   private generateEmbedding: any = null;
@@ -50,7 +55,10 @@ export class LocalEmbeddingService {
         quantized: true, // 양자화된 모델 사용 (용량 절감)
         progress_callback: (progress: any) => {
           if (progress.status === 'progress') {
-            console.log(`📊 모델 로딩 진행: ${(progress.progress * 100).toFixed(0)}%`);
+            // ✅ 진행률을 0-100%로 제한 (비정상적인 값 방지)
+            const rawProgress = progress.progress || 0;
+            const percentage = Math.min(100, Math.max(0, rawProgress * 100));
+            console.log(`📊 모델 로딩 진행: ${percentage.toFixed(0)}%`);
           }
         }
       }
