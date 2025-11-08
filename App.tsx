@@ -241,15 +241,21 @@ function App() {
   // ✅ PDF.js 로드 확인 및 초기화
   useEffect(() => {
     if (typeof window !== 'undefined' && !window.pdfjsLib) {
-      // PDF.js가 없으면 CDN에서 로드
+      // ✅ PDF.js 버전 통일: 5.4.296 (package.json과 일치)
+      const pdfjsVersion = '5.4.296';
       const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js';
+      script.src = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.min.js`;
       script.onload = () => {
         if (window.pdfjsLib) {
+          // ✅ Worker 버전도 5.4.296으로 통일
           window.pdfjsLib.GlobalWorkerOptions.workerSrc = 
-            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-          console.log('✅ PDF.js 로드 완료');
+            `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.worker.min.js`;
+          console.log(`✅ PDF.js 로드 완료 (v${pdfjsVersion})`);
         }
+      };
+      script.onerror = () => {
+        console.warn('⚠️ PDF.js CDN 로드 실패, 로컬 파일 시도');
+        // 로컬 파일 폴백은 index.html에서 처리됨
       };
       document.head.appendChild(script);
     }
@@ -295,14 +301,18 @@ function App() {
         return fallbackPage;
       }
 
-      // ✅ 개선: PDF.js Worker 설정 (여러 CDN 시도)
+      // ✅ 개선: PDF.js Worker 설정 (버전 감지 + 여러 CDN)
       try {
         if (window.pdfjsLib && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
-          // 여러 CDN 경로 시도 (우선순위 순)
+          // ✅ PDF.js 버전 감지 (라이브러리와 Worker 버전 일치 보장)
+          const pdfjsVersion = window.pdfjsLib.version || '5.4.296';
+          console.log('📦 PDF.js 버전 감지:', pdfjsVersion);
+          
+          // 여러 CDN 경로 시도 (우선순위 순, 감지된 버전 사용)
           const workerUrls = [
-            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.296/pdf.worker.min.js',
-            'https://unpkg.com/pdfjs-dist@5.4.296/build/pdf.worker.min.js',
-            'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.296/build/pdf.worker.min.js'
+            `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.worker.min.js`,
+            `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.js`,
+            `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.js`
           ];
           
           // 첫 번째 CDN 설정
@@ -327,10 +337,13 @@ function App() {
         if (error.message && (error.message.includes('worker') || error.message.includes('Failed to fetch'))) {
           console.warn('⚠️ 첫 번째 CDN 실패, 대체 CDN 시도:', error.message);
           try {
+            // ✅ 버전 감지
+            const pdfjsVersion = window.pdfjsLib?.version || '5.4.296';
+            
             // 대체 CDN 시도
             const alternativeUrls = [
-              'https://unpkg.com/pdfjs-dist@5.4.296/build/pdf.worker.min.js',
-              'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.296/build/pdf.worker.min.js'
+              `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.js`,
+              `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.js`
             ];
             
             for (const altUrl of alternativeUrls) {
@@ -351,8 +364,32 @@ function App() {
               }
             }
             
+            // ✅ 추가: 모든 CDN 실패 시 로컬 파일 시도
             if (!pdf) {
-              console.error('❌ 모든 CDN 실패, fallback 페이지 사용');
+              console.warn('⚠️ 모든 CDN 실패, 로컬 파일 시도');
+              try {
+                const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                const localWorkerPath = isDevelopment 
+                  ? '/assets/pdf.worker.min.js'
+                  : '/chat7v/assets/pdf.worker.min.js';
+                
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc = localWorkerPath;
+                console.log('🔄 로컬 Worker 파일 시도:', localWorkerPath);
+                
+                const loadingTask3 = window.pdfjsLib.getDocument({
+                  url: pdfUrl,
+                  verbosity: 0
+                });
+                pdf = await loadingTask3.promise;
+                console.log('✅ 로컬 Worker 파일로 PDF 로드 성공');
+              } catch (localError) {
+                console.error('❌ 로컬 Worker 파일도 실패, fallback 페이지 사용:', localError);
+                return fallbackPage;
+              }
+            }
+            
+            if (!pdf) {
+              console.error('❌ 모든 방법 실패, fallback 페이지 사용');
               return fallbackPage;
             }
           } catch (error2) {
