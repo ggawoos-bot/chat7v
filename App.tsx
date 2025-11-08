@@ -808,43 +808,61 @@ function App() {
       }
       
       // ✅ 개선: searchSentence가 있으면 항상 PDF 검색 실행 (pageFromSentenceMap 검증/보정)
-      if (filename && searchSentence && searchSentence.length >= 15) {
-        try {
-          const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-          const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
-          const encodedFilename = encodeURIComponent(filename);
-          const pdfUrl = `${window.location.origin}${basePath}/${encodedFilename}`;
-          
-          console.log('🔍 정확한 페이지 검색 시작 (pageFromSentenceMap 검증):', {
-            searchSentence: searchSentence.substring(0, 50),
-            fallbackPage: actualPage,
-            pageFromSentenceMap: pageFromSentenceMap || '없음',
-            source: referencedSentence ? 'referencedSentence' : (responseText ? 'extracted' : 'extractSearchText')
-          });
-          
-          // PDF에서 정확한 페이지 검색 (pageFromSentenceMap이 있으면 그것을 fallback으로 사용)
-          const foundPage = await findExactPageInPDF(pdfUrl, searchSentence, actualPage);
-          
-          // ✅ 검색 결과가 pageFromSentenceMap과 다르면 로그 출력
-          if (pageFromSentenceMap && foundPage !== pageFromSentenceMap) {
-            console.log('✅ 페이지 보정 완료:', {
-              pageFromSentenceMap,
-              foundPage,
-              차이: foundPage - pageFromSentenceMap
-            });
+      // ✅ 추가: searchSentence가 없어도 pageFromSentenceMap이 있으면 검증 시도
+      if (filename && (searchSentence || pageFromSentenceMap)) {
+        // searchSentence가 없으면 pageFromSentenceMap 기반으로 검색 문장 생성 시도
+        if (!searchSentence || searchSentence.length < 15) {
+          if (pageFromSentenceMap && chunkContent) {
+            // pageFromSentenceMap이 있으면 청크 내용에서 핵심 문장 추출 시도
+            const bestSentence = extractBestSentence(chunkContent);
+            if (bestSentence && bestSentence.length >= 15) {
+              searchSentence = bestSentence;
+              console.log('✅ pageFromSentenceMap 검증을 위한 문장 추출:', searchSentence.substring(0, 50));
+            }
           }
-          
-          actualPage = foundPage;
-          
-          console.log('✅ 페이지 검색 완료:', {
-            originalPage: page,
-            pageFromSentenceMap: pageFromSentenceMap || '없음',
-            actualPage: actualPage,
-            changed: actualPage !== page
-          });
-        } catch (error) {
-          console.warn('⚠️ 페이지 검색 실패, 기본 페이지 사용:', error);
-          // 오류 시 원래 페이지 사용
+        }
+        
+        if (filename && searchSentence && searchSentence.length >= 15) {
+          try {
+            const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
+            const encodedFilename = encodeURIComponent(filename);
+            const pdfUrl = `${window.location.origin}${basePath}/${encodedFilename}`;
+            
+            console.log('🔍 정확한 페이지 검색 시작 (pageFromSentenceMap 검증):', {
+              searchSentence: searchSentence.substring(0, 50),
+              fallbackPage: actualPage,
+              pageFromSentenceMap: pageFromSentenceMap || '없음',
+              source: referencedSentence ? 'referencedSentence' : (responseText ? 'extracted' : (chunkContent ? 'chunkContent' : 'extractSearchText'))
+            });
+            
+            // PDF에서 정확한 페이지 검색 (pageFromSentenceMap이 있으면 그것을 fallback으로 사용)
+            const foundPage = await findExactPageInPDF(pdfUrl, searchSentence, actualPage);
+            
+            // ✅ 검색 결과가 pageFromSentenceMap과 다르면 로그 출력
+            if (pageFromSentenceMap && foundPage !== pageFromSentenceMap) {
+              console.log('✅ 페이지 보정 완료:', {
+                pageFromSentenceMap,
+                foundPage,
+                차이: foundPage - pageFromSentenceMap
+              });
+            }
+            
+            actualPage = foundPage;
+            
+            console.log('✅ 페이지 검색 완료:', {
+              originalPage: page,
+              pageFromSentenceMap: pageFromSentenceMap || '없음',
+              actualPage: actualPage,
+              changed: actualPage !== page
+            });
+          } catch (error) {
+            console.warn('⚠️ 페이지 검색 실패, 기본 페이지 사용:', error);
+            // 오류 시 원래 페이지 사용
+          }
+        } else if (pageFromSentenceMap) {
+          // searchSentence를 만들 수 없어도 pageFromSentenceMap은 사용 (최소한의 검증)
+          console.log('⚠️ 검색 문장을 추출할 수 없어 pageFromSentenceMap 사용 (검증 없음):', pageFromSentenceMap);
         }
       }
       
