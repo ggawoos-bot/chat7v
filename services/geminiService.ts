@@ -1688,7 +1688,19 @@ Here is the source material:
     }
     
     if (existingFiles.length === 0) {
-      throw new Error('로드할 수 있는 PDF 파일이 없습니다.');
+      // ✅ PDF 파일이 없을 때 에러 대신 graceful하게 처리
+      console.warn('⚠️ PDF 파일이 없습니다. Firestore 캐시만 사용합니다.');
+      console.log('✅ Firestore 캐시에서 이미 로드된 청크를 사용합니다.');
+      
+      // 진행률 업데이트
+      this.loadingProgress = {
+        ...this.loadingProgress,
+        status: 'PDF 파일 없음 - Firestore 캐시 사용',
+        loadedChunks: this.allChunks?.length || 0,
+        estimatedTimeRemaining: 0
+      };
+      
+      return; // 에러를 던지지 않고 정상 종료
     }
     
     console.log(`✅ ${existingFiles.length}개 파일 존재 확인 완료, 병렬 로딩 시작...`);
@@ -2201,7 +2213,8 @@ Here is the source material:
       };
       
       console.log(`✅ Firestore 청크 로드 완료: ${chunks.length}개 청크 (fullText 생성 안함)`);
-      return '';
+      // ✅ truthy 값 반환하여 initializeWithBackgroundPreloading() 실행 방지
+      return 'loaded';
       
     } catch (error) {
       console.error('❌ Firestore 데이터 로드 실패:', error);
