@@ -247,10 +247,15 @@ function App() {
       script.src = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.min.js`;
       script.onload = () => {
         if (window.pdfjsLib) {
-          // ✅ Worker 버전도 5.4.296으로 통일
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = 
-            `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.worker.min.js`;
-          console.log(`✅ PDF.js 로드 완료 (v${pdfjsVersion})`);
+          // ✅ Worker 설정을 로컬 파일로 우선 설정 (안정적, CDN 의존성 제거)
+          const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+          const localWorkerPath = isDevelopment 
+            ? '/assets/pdf.worker.min.js'
+            : '/chat7v/assets/pdf.worker.min.js';
+          
+          // ✅ 로컬 파일 우선 설정 (CDN 실패 방지)
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = localWorkerPath;
+          console.log(`✅ PDF.js 로드 완료 (v${pdfjsVersion}), Worker: 로컬 파일 (${localWorkerPath})`);
         }
       };
       script.onerror = () => {
@@ -301,37 +306,53 @@ function App() {
         return fallbackPage;
       }
 
-      // ✅ 개선: PDF.js Worker 설정 (버전 감지 + 여러 CDN)
+      // ✅ 개선: PDF.js Worker 설정 (로컬 파일 우선, Worker 리셋 지원)
       try {
-        if (window.pdfjsLib && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
-          // ✅ PDF.js 버전 감지 (라이브러리와 Worker 버전 일치 보장)
-          const pdfjsVersion = window.pdfjsLib.version || '5.4.296';
-          console.log('📦 PDF.js 버전 감지:', pdfjsVersion);
+        if (window.pdfjsLib) {
+          // ✅ Worker가 이미 설정되어 있으면 리셋 시도 (새로운 설정 적용을 위해)
+          if (window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+            try {
+              // PDF.js 내부 Worker 인스턴스 리셋
+              if (window.pdfjsLib.GlobalWorkerOptions.workerPort) {
+                window.pdfjsLib.GlobalWorkerOptions.workerPort.terminate();
+              }
+              // Worker 포트 초기화
+              window.pdfjsLib.GlobalWorkerOptions.workerPort = null;
+            } catch (e) {
+              // 리셋 실패해도 계속 진행
+              console.warn('⚠️ Worker 리셋 실패 (계속 진행):', e);
+            }
+          }
           
-          // 여러 CDN 경로 시도 (npm 패키지 우선, cdnjs는 마지막)
-          // ✅ npm 패키지 직접 사용 (ESM 모듈 형식 .mjs 사용)
-          const workerUrls = [
-            `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.mjs`,
-            `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.mjs`,
-            // legacy 빌드도 시도 (일부 환경에서 필요)
-            `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
-            `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
-            // cdnjs는 마지막에 시도 (버전이 없을 수 있음)
-            `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.worker.min.js`
-          ];
+          // ✅ 로컬 파일 우선 설정 (안정적, CDN 의존성 제거)
+          const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+          const localWorkerPath = isDevelopment 
+            ? '/assets/pdf.worker.min.js'
+            : '/chat7v/assets/pdf.worker.min.js';
           
-          // 첫 번째 CDN 설정
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrls[0];
-          console.log('✅ PDF.js Worker 설정 (CDN):', workerUrls[0]);
+          // 로컬 파일 우선 설정
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = localWorkerPath;
+          console.log('✅ PDF.js Worker 설정 (로컬 파일 우선):', localWorkerPath);
         }
       } catch (error) {
         console.warn('⚠️ PDF.js Worker 설정 실패:', error);
         // Worker 없이도 기본 기능은 작동하므로 계속 진행
       }
 
-      // PDF.js로 PDF 로드 (Worker 실패 시 재시도)
+      // PDF.js로 PDF 로드 (Worker 경로 검증 후)
       let pdf;
       try {
+        // ✅ Worker 경로가 설정되어 있는지 확인 및 검증
+        if (!window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          // Worker가 설정되지 않았으면 로컬 파일로 설정
+          const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+          const localWorkerPath = isDevelopment 
+            ? '/assets/pdf.worker.min.js'
+            : '/chat7v/assets/pdf.worker.min.js';
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = localWorkerPath;
+          console.log('✅ Worker 경로 자동 설정:', localWorkerPath);
+        }
+        
         const loadingTask = window.pdfjsLib.getDocument({
           url: pdfUrl,
           verbosity: 0
