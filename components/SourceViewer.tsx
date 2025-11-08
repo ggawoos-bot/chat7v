@@ -148,278 +148,26 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     };
   };
 
-  // 텍스트에서 검색어를 하이라이트 처리하는 함수 (복수 단어 지원 + 문장 하이라이트)
+  // 텍스트에서 검색어를 하이라이트 처리하는 함수
   const highlightSearchTerm = (text: string, searchTerm: string) => {
     if (!searchTerm || !text) return text;
 
-    // ✅ 방안 2: 공백으로 구분된 단어들을 각각 하이라이트
-    const searchTerms = searchTerm
-      .split(/\s+/)
-      .map(term => term.trim())
-      .filter(term => term.length > 0);
-    
-    // 단일 검색어인 경우 기존 방식 사용
-    if (searchTerms.length === 1) {
-      const escapedSearchTerm = searchTerms[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`(${escapedSearchTerm})`, 'gi');
-      const parts = text.split(regex);
+    // 원본 검색어 사용 (대소문자 구분 안 함)
+    const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escapedSearchTerm})`, 'gi');
+    const parts = text.split(regex);
 
-      return parts.map((part, index) => {
-        const isMatch = part.toLowerCase() === searchTerms[0].toLowerCase();
-        return isMatch ? (
-          <span key={index} className="search-highlight bg-yellow-200 text-yellow-900 font-bold px-0.5 rounded">
-            {part}
-          </span>
-        ) : (
-          part
-        );
-      });
-    }
-    
-    // ✅ 복수 검색어인 경우: 문장 단위 하이라이트 + 개별 단어 하이라이트
-    // 1단계: 문장으로 분할하고 2개 이상의 검색어가 포함된 문장 찾기
-    const sentenceRegex = /([^.。!！?？\n]+[.。!！?？\n]+)/g;
-    const sentenceMatches: { start: number; end: number; sentence: string }[] = [];
-    let match;
-    
-    while ((match = sentenceRegex.exec(text)) !== null) {
-      const sentenceText = match[0].trim();
-      if (sentenceText.length < 5) continue; // 너무 짧은 문장은 스킵
-      
-      const normalizedSentence = sentenceText.toLowerCase();
-      
-      // 문장에 포함된 검색어 개수 확인
-      const matchedTermsCount = searchTerms.filter(term => 
-        normalizedSentence.includes(term.toLowerCase())
-      ).length;
-      
-      // 2개 이상의 검색어가 포함된 경우
-      if (matchedTermsCount >= 2) {
-        sentenceMatches.push({
-          start: match.index,
-          end: match.index + match[0].length,
-          sentence: sentenceText
-        });
-      }
-    }
-    
-    // 마지막 문장 처리 (문장 종료 문자가 없는 경우)
-    const lastSentenceStart = sentenceMatches.length > 0 
-      ? sentenceMatches[sentenceMatches.length - 1].end 
-      : 0;
-    if (lastSentenceStart < text.length) {
-      const lastSentence = text.substring(lastSentenceStart).trim();
-      if (lastSentence.length >= 5) {
-        const normalizedLastSentence = lastSentence.toLowerCase();
-        const matchedTermsCount = searchTerms.filter(term => 
-          normalizedLastSentence.includes(term.toLowerCase())
-        ).length;
-        
-        if (matchedTermsCount >= 2) {
-          sentenceMatches.push({
-            start: lastSentenceStart,
-            end: text.length,
-            sentence: lastSentence
-          });
-        }
-      }
-    }
-    
-    // 2단계: 6줄 이상인 문장 하이라이트 제외
-    const filteredSentenceMatches = sentenceMatches.filter(match => {
-      const sentenceText = text.substring(match.start, match.end);
-      const lineCount = (sentenceText.match(/\n/g) || []).length + 1; // 줄바꿈 개수 + 1
-      return lineCount < 6; // 6줄 미만만 허용
+    return parts.map((part, index) => {
+      // 각 부분이 검색어와 일치하는지 확인 (대소문자 무시)
+      const isMatch = part.toLowerCase() === searchTerm.toLowerCase();
+      return isMatch ? (
+        <span key={index} className="search-highlight bg-yellow-200 text-yellow-900 font-medium px-0.5 rounded">
+          {part}
+        </span>
+      ) : (
+        part
+      );
     });
-    
-    // 3단계: 문장 하이라이트와 단어 하이라이트를 결합
-    let highlightedText: React.ReactNode[] = [];
-    let lastIndex = 0;
-    
-    // 문장 하이라이트가 있는 경우
-    if (filteredSentenceMatches.length > 0) {
-      filteredSentenceMatches.forEach((match, matchIndex) => {
-        // 문장 이전 텍스트
-        if (match.start > lastIndex) {
-          const beforeText = text.substring(lastIndex, match.start);
-          highlightedText.push(beforeText);
-        }
-        
-        // 문장 전체를 하이라이트 (배경색으로, 텍스트는 파란색)
-        const sentenceText = text.substring(match.start, match.end);
-        highlightedText.push(
-          <span 
-            key={`sentence-${matchIndex}`}
-            className="search-sentence-highlight bg-yellow-100 text-blue-600 px-1 rounded"
-          >
-            {sentenceText}
-          </span>
-        );
-        
-        lastIndex = match.end;
-      });
-      
-      // 마지막 문장 이후 텍스트
-      if (lastIndex < text.length) {
-        highlightedText.push(text.substring(lastIndex));
-      }
-      
-      // 3단계: 개별 단어도 하이라이트 적용 (문장 하이라이트 위에 + 문장 외부에도)
-      searchTerms.forEach((term, termIndex) => {
-        const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`(${escapedTerm})`, 'gi');
-        
-        const newParts: React.ReactNode[] = [];
-        
-        highlightedText.forEach((part) => {
-          if (typeof part === 'string') {
-            // 하이라이트되지 않은 텍스트에서도 개별 단어 하이라이트
-            const parts = part.split(regex);
-            parts.forEach((p, i) => {
-              const isMatch = p.toLowerCase() === term.toLowerCase();
-              if (isMatch) {
-                newParts.push(
-                  <span 
-                    key={`term-${termIndex}-part-${i}-${newParts.length}`} 
-                    className="search-highlight bg-yellow-200 text-yellow-900 font-bold px-0.5 rounded"
-                  >
-                    {p}
-                  </span>
-                );
-              } else if (p) {
-                newParts.push(p);
-              }
-            });
-          } else if (React.isValidElement(part)) {
-            // 이미 하이라이트된 부분 (문장 하이라이트)은 내부 텍스트만 처리
-            const children = part.props.children;
-            
-            if (typeof children === 'string') {
-              const parts = children.split(regex);
-              const sentenceParts: React.ReactNode[] = [];
-              
-              parts.forEach((p, i) => {
-                const isMatch = p.toLowerCase() === term.toLowerCase();
-                if (isMatch) {
-                  sentenceParts.push(
-                    <span 
-                      key={`sentence-term-${termIndex}-${i}`}
-                      className="search-highlight bg-yellow-300 text-blue-700 font-bold px-0.5 rounded"
-                    >
-                      {p}
-                    </span>
-                  );
-                } else if (p) {
-                  sentenceParts.push(p);
-                }
-              });
-              
-              // 문장 하이라이트 안에 단어 하이라이트 포함
-              newParts.push(
-                <span 
-                  key={part.key || `sentence-${termIndex}-${newParts.length}`}
-                  className={part.props.className}
-                >
-                  {sentenceParts}
-                </span>
-              );
-            } else {
-              // children이 string이 아닌 경우 그대로 유지
-              newParts.push(part);
-            }
-          } else {
-            newParts.push(part);
-          }
-        });
-        
-        highlightedText = newParts;
-      });
-    } else {
-      // 문장 하이라이트가 없으면 모든 검색어를 개별적으로만 하이라이트
-      let highlightedTextNode: React.ReactNode = text;
-      
-      searchTerms.forEach((term, termIndex) => {
-        const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`(${escapedTerm})`, 'gi');
-        
-        // 현재 highlightedTextNode를 처리하는 함수
-        const processNode = (node: React.ReactNode): React.ReactNode => {
-          if (typeof node === 'string') {
-            const parts = node.split(regex);
-            return parts.map((part, i) => {
-              const isMatch = part.toLowerCase() === term.toLowerCase();
-              if (isMatch) {
-                return (
-                  <span 
-                    key={`term-${termIndex}-${i}`}
-                    className="search-highlight bg-yellow-200 text-yellow-900 font-bold px-0.5 rounded"
-                  >
-                    {part}
-                  </span>
-                );
-              }
-              return part;
-            });
-          } else if (React.isValidElement(node)) {
-            const children = node.props.children;
-            if (typeof children === 'string') {
-              const parts = children.split(regex);
-              const newChildren = parts.map((part, i) => {
-                const isMatch = part.toLowerCase() === term.toLowerCase();
-                if (isMatch) {
-                  return (
-                    <span 
-                      key={`nested-term-${termIndex}-${i}`}
-                      className="search-highlight bg-yellow-200 text-yellow-900 font-bold px-0.5 rounded"
-                    >
-                      {part}
-                    </span>
-                  );
-                }
-                return part;
-              });
-              return React.cloneElement(node, { key: node.key || `wrapper-${termIndex}` }, newChildren);
-            } else if (Array.isArray(children)) {
-              const newChildren = children.map((child, idx) => {
-                if (typeof child === 'string') {
-                  const parts = child.split(regex);
-                  return parts.map((part, i) => {
-                    const isMatch = part.toLowerCase() === term.toLowerCase();
-                    if (isMatch) {
-                      return (
-                        <span 
-                          key={`array-term-${termIndex}-${idx}-${i}`}
-                          className="search-highlight bg-yellow-200 text-yellow-900 font-bold px-0.5 rounded"
-                        >
-                          {part}
-                        </span>
-                      );
-                    }
-                    return part;
-                  });
-                }
-                return processNode(child);
-              });
-              return React.cloneElement(node, { key: node.key || `wrapper-${termIndex}` }, newChildren);
-            }
-            return node;
-          } else if (Array.isArray(node)) {
-            return node.map((item, idx) => (
-              <React.Fragment key={`fragment-${termIndex}-${idx}`}>
-                {processNode(item)}
-              </React.Fragment>
-            ));
-          }
-          return node;
-        };
-        
-        highlightedTextNode = processNode(highlightedTextNode);
-      });
-      
-      highlightedText = [highlightedTextNode];
-    }
-    
-    return <>{highlightedText}</>;
   };
 
   // ✅ 질문 내용에서 의미있는 단어들을 추출하여 하이라이트하는 함수
@@ -703,174 +451,99 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
   const navigateToSearchResult = (match: PDFChunk, index: number) => {
     // chunksByPage를 사용하여 실제 페이지 번호 찾기
     let targetPage = 1;
+    let targetPageChunks: PDFChunk[] = [];
     for (const [pageNum, pageChunks] of Object.entries(chunksByPage)) {
-      if (pageChunks.some(c => c.id === match.id)) {
+      const chunks = pageChunks as PDFChunk[];
+      if (chunks.some(c => c.id === match.id)) {
         targetPage = parseInt(pageNum);
+        targetPageChunks = chunks;
         break;
       }
     }
+    
+    // 해당 페이지에서 현재 청크의 위치 확인
+    const chunkIndexInPage = targetPageChunks.findIndex(c => c.id === match.id);
+    const totalChunksInPage = targetPageChunks.length;
+    const isInTopHalf = chunkIndexInPage < totalChunksInPage / 2;
     
     // 페이지 변경 시 suppressObserverRef 설정
     suppressObserverRef.current = true;
     if (onPdfPageChange) onPdfPageChange(targetPage);
     
-    // ✅ 요소가 화면에 보이는지 확인하는 함수
-    const isElementVisible = (element: HTMLElement, container: HTMLElement): boolean => {
-      const containerRect = container.getBoundingClientRect();
-      const elementRect = element.getBoundingClientRect();
-      
-      // 요소가 컨테이너의 가시 영역 내에 있는지 확인 (일부만 보여도 true)
-      return (
-        elementRect.top < containerRect.bottom &&
-        elementRect.bottom > containerRect.top &&
-        elementRect.left < containerRect.right &&
-        elementRect.right > containerRect.left
-      );
-    };
-    
     // 페이지 변경 후 DOM 업데이트를 기다린 후 스크롤
-    const scrollToMatch = (attempt: number = 0) => {
+    const scrollToMatch = () => {
       const el = window.document.getElementById(`chunk-${match.id}`);
       const container = scrollContainerRef.current;
       
-      if (!el) {
-        // 요소를 찾지 못한 경우 재시도
-        if (attempt < 3) {
-          setTimeout(() => scrollToMatch(attempt + 1), 200);
-        } else {
-          suppressObserverRef.current = false;
-        }
-        return;
-      }
-      
-      if (container) {
-        // ✅ 요소가 화면에 보이는지 확인
-        const isVisible = isElementVisible(el, container);
+      if (el && container) {
+        // 스크롤 컨테이너 내에서 요소의 위치 계산
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = el.getBoundingClientRect();
+        const scrollTop = container.scrollTop;
         
-        if (!isVisible || attempt === 0) {
-          // 요소가 가려져 있거나 첫 시도인 경우 스크롤
-          const containerRect = container.getBoundingClientRect();
-          const elementRect = el.getBoundingClientRect();
-          const scrollTop = container.scrollTop;
-          
-          // ✅ 요소가 컨테이너의 중앙에 오도록 스크롤 계산 (여유 공간 추가)
-          const offset = 50; // 상하 여유 공간
-          const targetScrollTop = scrollTop + elementRect.top - containerRect.top - (containerRect.height / 2) + (elementRect.height / 2) - offset;
-          
-          // ✅ 즉시 스크롤 (smooth가 실패할 수 있으므로)
-          container.scrollTop = targetScrollTop;
-          
-          // ✅ 스크롤 후 다시 확인하여 확실히 보이도록 함
-          setTimeout(() => {
-            const newElementRect = el.getBoundingClientRect();
-            const newContainerRect = container.getBoundingClientRect();
-            const isNowVisible = (
-              newElementRect.top < newContainerRect.bottom &&
-              newElementRect.bottom > newContainerRect.top
-            );
-            
-            if (!isNowVisible && attempt < 2) {
-              // 여전히 보이지 않으면 다시 시도
-              scrollToMatch(attempt + 1);
-            } else {
-              // ✅ 부드러운 스크롤로 최종 조정
-              container.scrollTo({
-                top: container.scrollTop,
-                behavior: 'smooth'
-              });
-              
-              // 스크롤 완료 후 observer 재개
-              setTimeout(() => {
-                suppressObserverRef.current = false;
-              }, 500);
-            }
-          }, 100);
+        let targetScrollTop: number;
+        
+        if (isInTopHalf) {
+          // 상위 50% 이내: 맨 위로 스크롤
+          targetScrollTop = scrollTop + elementRect.top - containerRect.top;
         } else {
-          // 이미 보이는 경우 observer만 재개
-          suppressObserverRef.current = false;
+          // 하위 50%: 맨 아래로 스크롤
+          const elementBottom = scrollTop + elementRect.top - containerRect.top + elementRect.height;
+          targetScrollTop = elementBottom - containerRect.height;
         }
-      } else if (el) {
-        // scrollContainerRef가 없으면 기본 방법 사용
-        // ✅ 더 확실한 스크롤을 위해 여러 옵션 시도
-        el.scrollIntoView({ 
-          behavior: 'smooth', 
-          block: 'center',
-          inline: 'nearest'
+        
+        // 부드럽게 스크롤
+        container.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: 'smooth'
         });
         
-        // ✅ 추가 확인: scrollIntoView가 실패할 수 있으므로 직접 스크롤도 시도
+        // 스크롤 완료 후 observer 재개
         setTimeout(() => {
-          const parent = el.offsetParent as HTMLElement;
-          if (parent) {
-            const elementTop = el.offsetTop;
-            const parentHeight = parent.clientHeight;
-            const scrollTop = elementTop - (parentHeight / 2) + (el.offsetHeight / 2);
-            parent.scrollTop = scrollTop;
-          }
-        }, 300);
-        
+          suppressObserverRef.current = false;
+        }, 500);
+      } else if (el) {
+        // scrollContainerRef가 없으면 기본 방법 사용
+        el.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: isInTopHalf ? 'start' : 'end' 
+        });
         suppressObserverRef.current = false;
       }
     };
     
-    // ✅ 페이지 변경 후 충분한 시간을 기다려서 DOM이 업데이트되도록 함
-    // 여러 번 시도하여 확실히 스크롤
+    // 페이지 변경 후 충분한 시간을 기다려서 DOM이 업데이트되도록 함
     setTimeout(() => {
-      scrollToMatch(0);
+      scrollToMatch();
+      // 만약 첫 번째 시도에서 요소를 찾지 못하면 추가 시도
+      setTimeout(() => {
+        const el = window.document.getElementById(`chunk-${match.id}`);
+        if (el && scrollContainerRef.current) {
+          scrollToMatch();
+        }
+      }, 200);
     }, 400);
-    
-    // ✅ 추가 시도: DOM 업데이트가 늦을 수 있으므로
-    setTimeout(() => {
-      scrollToMatch(1);
-    }, 800);
-    
-    // ✅ 최종 시도: 확실히 보이도록
-    setTimeout(() => {
-      scrollToMatch(2);
-    }, 1200);
   };
 
   // 간단 검색: 텍스트 포함 청크를 찾아 해당 페이지로 이동 후 스크롤
   const handleSearchSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const query = (searchText || '').trim();
+    const query = (searchText || '').trim().toLowerCase();
     if (!query || chunks.length === 0) return;
     
     try {
       setIsSearching(true);
       
-      // ✅ 방안 1: 공백으로 구분된 단어들을 AND 조건으로 검색
-      const searchTerms = query
-        .split(/\s+/) // 공백(연속 공백 포함)으로 분할
-        .map(term => term.trim().toLowerCase())
-        .filter(term => term.length > 0); // 빈 문자열 제거
-      
-      const normalizedQuery = query.toLowerCase();
-      
       // 검색어가 변경되었거나 처음 검색하는 경우
-      if (normalizedQuery !== lastSearchQuery) {
-        // ✅ AND 조건: 모든 검색어가 포함된 청크만 찾기
-        const matches = chunks.filter((c) => {
-          const content = (c.content || '').toLowerCase();
-          
-          // 단일 검색어인 경우 (공백이 없는 경우)
-          if (searchTerms.length === 1) {
-            return content.includes(searchTerms[0]);
-          }
-          
-          // 복수 검색어인 경우: 모든 단어가 포함되어야 함 (AND 조건)
-          return searchTerms.every(term => content.includes(term));
-        });
-        
+      if (query !== lastSearchQuery) {
+        // 모든 매칭 청크 찾기
+        const matches = chunks.filter((c) => (c.content || '').toLowerCase().includes(query));
         setSearchResults(matches);
         setCurrentSearchIndex(0);
-        setLastSearchQuery(normalizedQuery);
+        setLastSearchQuery(query);
         
         if (matches.length > 0) {
           navigateToSearchResult(matches[0], 0);
-        } else {
-          // 검색 결과가 없을 때 사용자에게 알림
-          console.log(`⚠️ 검색 결과 없음: "${query}" (${searchTerms.length}개 단어 모두 포함 필요)`);
         }
       } else {
         // 같은 검색어로 다음 결과 찾기
@@ -1060,27 +733,62 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
       
       if (highlightedChunk) {
         // 청크의 페이지 번호로 pdfCurrentPage 업데이트
+        let targetPageChunks: PDFChunk[] = [];
         for (const [pageNum, pageChunks] of Object.entries(chunksByPage)) {
-          if (pageChunks.some(c => c.id === highlightedChunkId)) {
+          const chunks = pageChunks as PDFChunk[];
+          if (chunks.some(c => c.id === highlightedChunkId)) {
             const actualPage = parseInt(pageNum);
             if (actualPage !== pdfCurrentPage && onPdfPageChange) {
               onPdfPageChange(actualPage);
             }
+            targetPageChunks = chunks;
             break;
           }
         }
         
+        // 해당 페이지에서 현재 청크의 위치 확인
+        const chunkIndexInPage = targetPageChunks.findIndex(c => c.id === highlightedChunkId);
+        const totalChunksInPage = targetPageChunks.length;
+        const isInTopHalf = chunkIndexInPage < totalChunksInPage / 2;
+        
         // 페이지 이동 후 하이라이트
         setTimeout(() => {
           const element = window.document.getElementById(`chunk-${highlightedChunkId}`);
-          if (element) {
+          const container = scrollContainerRef.current;
+          
+          if (element && container) {
             // 기존 타이머 정리
             if (highlightTimeoutRef.current) {
               clearTimeout(highlightTimeoutRef.current);
             }
             
-            // 스크롤만 수행 (노란색 하이라이트 효과 제거)
-            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // 스크롤 컨테이너 내에서 요소의 위치 계산
+            const containerRect = container.getBoundingClientRect();
+            const elementRect = element.getBoundingClientRect();
+            const scrollTop = container.scrollTop;
+            
+            let targetScrollTop: number;
+            
+            if (isInTopHalf) {
+              // 상위 50% 이내: 맨 위로 스크롤
+              targetScrollTop = scrollTop + elementRect.top - containerRect.top;
+            } else {
+              // 하위 50%: 맨 아래로 스크롤
+              const elementBottom = scrollTop + elementRect.top - containerRect.top + elementRect.height;
+              targetScrollTop = elementBottom - containerRect.height;
+            }
+            
+            // 부드럽게 스크롤
+            container.scrollTo({
+              top: Math.max(0, targetScrollTop),
+              behavior: 'smooth'
+            });
+          } else if (element) {
+            // scrollContainerRef가 없으면 기본 방법 사용
+            element.scrollIntoView({ 
+              behavior: 'smooth', 
+              block: isInTopHalf ? 'start' : 'end' 
+            });
           }
         }, 100);
       }
@@ -1232,7 +940,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                         : `${window.location.origin}${pdfUrl}`;
                       
                       // 새 창에서 PDF 뷰어 열기
-                      const viewerUrl = `/chat7v/pdf-viewer.html?url=${encodeURIComponent(absolutePdfUrl)}&page=${pdfCurrentPage}&title=${encodeURIComponent(documentTitle || 'PDF 문서')}`;
+                      const viewerUrl = `/pdf-viewer.html?url=${encodeURIComponent(absolutePdfUrl)}&page=${pdfCurrentPage}&title=${encodeURIComponent(documentTitle || 'PDF 문서')}`;
                       
                       console.log('📄 PDF 뷰어 새 창 열기:', viewerUrl);
                       console.log('📄 PDF 파일 URL:', absolutePdfUrl);
@@ -1418,11 +1126,11 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                   {/* 메타데이터 */}
                   <div className="flex items-center gap-2 text-xs text-brand-text-secondary mb-2">
                     {chunk.metadata.page && (
-                      <span className="w-full flex items-center justify-center gap-1 text-base font-bold text-brand-text-primary">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <span className="inline-flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        - {chunk.metadata.page} -
+                        페이지 {chunk.metadata.page}
                       </span>
                     )}
                     {chunk.metadata.section && (
