@@ -1421,8 +1421,26 @@ Here is the source material:
   }
 
   // PDF 파싱 함수 (CDN에서 로드된 PDF.js 사용)
-  async parsePdfFromUrl(url: string): Promise<string> {
+  /**
+   * 파일 존재 여부 확인 (HEAD 요청)
+   */
+  private async checkFileExists(url: string): Promise<boolean> {
     try {
+      const response = await fetch(url, { method: 'HEAD' });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async parsePdfFromUrl(url: string, skipLegalArticleExtraction: boolean = false): Promise<string> {
+    try {
+      // ✅ 파일 존재 확인 (404 에러 빠른 감지)
+      const fileExists = await this.checkFileExists(url);
+      if (!fileExists) {
+        throw new Error(`File not found: ${url}`);
+      }
+
       const pdfData = await fetch(url).then(res => {
         if (!res.ok) {
           throw new Error(`Failed to fetch ${url}: ${res.statusText}`);
@@ -1462,7 +1480,8 @@ Here is the source material:
           }
         }
         
-        if (isLegal) {
+        // ✅ 법령 조항 추출 지연: 초기 로딩 시에는 스킵 (성능 최적화)
+        if (isLegal && !skipLegalArticleExtraction) {
           // 법령 문서의 경우 조항 추출 (파일명 전달)
           const articles = this.extractLegalArticles(pageText, filename);
           if (articles.length > 0) {
@@ -1476,14 +1495,14 @@ Here is the source material:
             fullText += `[PAGE_${actualPageNumber}] ${pageText}\n\n`;
           }
         } else {
-          // 일반 문서의 경우 페이지 번호 사용
+          // 일반 문서 또는 법령 조항 추출 스킵 시 페이지 번호 사용
           const actualPageNumber = this.extractActualPageNumber(pageText, i);
           fullText += `[PAGE_${actualPageNumber}] ${pageText}\n\n`;
         }
         
-        // 디버깅을 위한 로그
+        // 디버깅을 위한 로그 (법령 조항 추출 스킵 시에는 간소화)
         if (i <= 5 || i % 10 === 0) {
-          if (isLegal) {
+          if (isLegal && !skipLegalArticleExtraction) {
             const articles = this.extractLegalArticles(pageText, filename);
             console.log(`PDF.js 페이지 ${i} → 법령 조항: ${articles.length > 0 ? articles.join(', ') : '없음'}`);
           } else {
@@ -1541,20 +1560,10 @@ Here is the source material:
       }
       
       // 2. 실시간 PDF 파싱 (Firestore 실패시만)
+      // ✅ 개선: loadPdfSourcesOptimized()와 initializeWithBackgroundPreloading() 중복 제거
+      // loadPdfSourcesOptimized()는 이미 청크 생성 및 압축까지 수행하므로, 
+      // initializeWithBackgroundPreloading()는 호출하지 않음
       console.log('Firestore 데이터가 없어 실시간 PDF 파싱을 시도합니다...');
-      await this.loadPdfSourcesOptimized();
-      
-      // ✅ 핵심 수정: 실시간 파싱 후에도 ContextSelector 설정
-      if (this.allChunks && this.allChunks.length > 0) {
-        console.log('🔍 ContextSelector에 청크 설정 중...');
-        ContextSelector.setChunks(this.allChunks);
-        console.log(`✅ ContextSelector 설정 완료: ${this.allChunks.length}개 청크`);
-      } else {
-        console.warn('⚠️ ContextSelector에 설정할 청크가 없습니다.');
-      }
-      
-      // 3. 백그라운드 프리로딩으로 답변 품질 100% 보장
-      console.log('백그라운드 프리로딩 시작 - 답변 품질 최우선 보장');
       await this.initializeWithBackgroundPreloading();
       
       // 압축 결과 검증
@@ -1657,43 +1666,80 @@ Here is the source material:
       estimatedTimeRemaining: 0
     };
 
-    // 모든 PDF를 순차적으로 로드 (답변 품질 보장)
-    const loadedPDFs = [];
+    // ✅ 병렬 PDF 로딩 (성능 최적화)
     const startTime = Date.now();
-
-    for (let i = 0; i < priorityOrder.length; i++) {
-      const pdfFile = priorityOrder[i];
+    
+    // 파일 존재 확인 (404 에러 빠른 감지)
+    console.log('📋 파일 존재 확인 중...');
+    const fileCheckPromises = priorityOrder.map(async (pdfFile) => {
+      const url = '/pdf/' + pdfFile;
+      const exists = await this.checkFileExists(url);
+      return { filename: pdfFile, exists, url };
+    });
+    const fileChecks = await Promise.all(fileCheckPromises);
+    const existingFiles = fileChecks.filter(f => f.exists).map(f => f.filename);
+    const missingFiles = fileChecks.filter(f => !f.exists).map(f => f.filename);
+    
+    if (missingFiles.length > 0) {
+      console.warn(`⚠️ 존재하지 않는 파일 ${missingFiles.length}개:`, missingFiles);
+      missingFiles.forEach(file => {
+        this.loadingProgress.failedFiles.push(`${file}: File not found (404)`);
+      });
+    }
+    
+    if (existingFiles.length === 0) {
+      throw new Error('로드할 수 있는 PDF 파일이 없습니다.');
+    }
+    
+    console.log(`✅ ${existingFiles.length}개 파일 존재 확인 완료, 병렬 로딩 시작...`);
+    
+    // ✅ 병렬 로딩 (최대 5개 동시 처리)
+    const CONCURRENT_LIMIT = 5;
+    const loadedPDFs: Array<{ filename: string; text: string }> = [];
+    
+    for (let i = 0; i < existingFiles.length; i += CONCURRENT_LIMIT) {
+      const batch = existingFiles.slice(i, i + CONCURRENT_LIMIT);
+      const batchNumber = Math.floor(i / CONCURRENT_LIMIT) + 1;
+      const totalBatches = Math.ceil(existingFiles.length / CONCURRENT_LIMIT);
       
       // 진행률 업데이트
       this.loadingProgress = {
         ...this.loadingProgress,
-        current: i + 1,
-        currentFile: pdfFile,
-        status: `백그라운드 로딩 중... (${i + 1}/${priorityOrder.length})`
+        current: Math.min(i + batch.length, existingFiles.length),
+        total: existingFiles.length,
+        currentFile: batch[0],
+        status: `병렬 로딩 중... (배치 ${batchNumber}/${totalBatches})`
       };
-
-      try {
-        console.log(`PDF 로딩 중: ${pdfFile} (${i + 1}/${priorityOrder.length})`);
-        const pdfText = await this.parsePdfFromUrl('/pdf/' + pdfFile);
-        
-        if (pdfText && pdfText.trim().length > 0) {
-          loadedPDFs.push({ filename: pdfFile, text: pdfText });
-          this.loadingProgress.successfulFiles.push(pdfFile);
-          console.log(`✅ PDF 로딩 성공: ${pdfFile}`);
-        } else {
-          throw new Error('PDF 텍스트가 비어있습니다.');
-        }
-      } catch (error) {
-        console.warn(`⚠️ PDF 로딩 실패: ${pdfFile} - ${error.message}`);
-        this.loadingProgress.failedFiles.push(`${pdfFile}: ${String(error)}`);
-      }
-
+      
+      // 배치 병렬 처리
+      const batchPromises = batch.map(async (pdfFile) => {
+        return this.parsePdfFromUrl('/pdf/' + pdfFile, true) // ✅ 법령 조항 추출 지연
+          .then(pdfText => {
+            if (pdfText && pdfText.trim().length > 0) {
+              this.loadingProgress.successfulFiles.push(pdfFile);
+              console.log(`✅ PDF 로딩 성공: ${pdfFile}`);
+              return { filename: pdfFile, text: pdfText };
+            } else {
+              throw new Error('PDF 텍스트가 비어있습니다.');
+            }
+          })
+          .catch(error => {
+            console.warn(`⚠️ PDF 로딩 실패: ${pdfFile} - ${error.message}`);
+            this.loadingProgress.failedFiles.push(`${pdfFile}: ${String(error)}`);
+            return null;
+          });
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      const successful = batchResults.filter((r): r is { filename: string; text: string } => r !== null);
+      loadedPDFs.push(...successful);
+      
       // 예상 남은 시간 계산
       const elapsed = Date.now() - startTime;
-      const avgTimePerFile = elapsed / (i + 1);
-      const remainingFiles = priorityOrder.length - (i + 1);
+      const processed = i + batch.length;
+      const avgTimePerFile = elapsed / processed;
+      const remainingFiles = existingFiles.length - processed;
       const estimatedRemaining = Math.round(avgTimePerFile * remainingFiles);
-      
       this.loadingProgress.estimatedTimeRemaining = estimatedRemaining;
     }
 
@@ -1712,7 +1758,12 @@ Here is the source material:
     // 청크 분할
     console.log('PDF 청크 분할 중...');
     this.allChunks = pdfCompressionService.splitIntoChunks(combinedText, 'PDF Document');
-    contextSelector.setChunks(this.allChunks);
+    
+    // ✅ ContextSelector에 청크 설정
+    console.log('🔍 ContextSelector에 청크 설정 중...');
+    ContextSelector.setChunks(this.allChunks);
+    console.log(`✅ ContextSelector 설정 완료: ${this.allChunks.length}개 청크`);
+    
     console.log(`PDF를 ${this.allChunks.length}개 청크로 분할 완료`);
 
     // 압축 처리 (실시간 PDF 파싱은 압축 적용)
@@ -1760,7 +1811,7 @@ Here is the source material:
     console.log(`PDF split into ${this.allChunks.length} chunks`);
     
     // 컨텍스트 선택기에 청크 설정
-    contextSelector.setChunks(this.allChunks);
+    ContextSelector.setChunks(this.allChunks);
     
     // PDF 내용 압축 (실시간 PDF 파싱은 압축 적용)
     console.log('Compressing PDF content...');
