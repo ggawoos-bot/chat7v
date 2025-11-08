@@ -319,6 +319,28 @@
     // 제목 설정
     document.getElementById('pdf-title').textContent = title;
     
+    // ✅ 검색 입력 필드 포커스 함수 (여러 시점에서 호출)
+    function focusSearchInput() {
+      const searchInput = document.getElementById('search-input');
+      if (searchInput && document.activeElement !== searchInput) {
+        try {
+          searchInput.focus();
+          console.log('✅ 검색 입력 필드에 포커스 설정');
+        } catch (e) {
+          console.warn('⚠️ 포커스 설정 실패:', e);
+        }
+      }
+    }
+    
+    // ✅ DOM 로드 완료 시 포커스 시도
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(focusSearchInput, 100);
+      });
+    } else {
+      setTimeout(focusSearchInput, 100);
+    }
+    
     let pdfDoc = null;
     let currentPage = initialPage;
     let numPages = 0;
@@ -401,6 +423,9 @@
       renderPage(currentPage);
       
       console.log('✅ PDF 로드 완료:', numPages, '페이지');
+      
+      // ✅ 검색 입력 필드에 자동 포커스 (PDF 로드 완료 후)
+      setTimeout(focusSearchInput, 300);
     }).catch((error) => {
       console.error('❌ PDF 로드 오류:', error);
       console.error('❌ PDF URL:', pdfUrl);
@@ -451,6 +476,12 @@
         
         renderTask.promise.then(() => {
           console.log(`✅ PDF 페이지 ${num} 캔버스 렌더링 완료`);
+          
+          // ✅ 초기 페이지 렌더링 완료 시 검색 입력 필드에 포커스
+          if (num === currentPage && !pageRendering) {
+            setTimeout(focusSearchInput, 100);
+          }
+          
           // 텍스트 레이어 렌더링 및 하이라이트
           return page.getTextContent();
         }).then((textContent) => {
@@ -510,6 +541,12 @@
           
           pageRendering = false;
           console.log(`✅ 페이지 ${num} 렌더링 완전히 완료`);
+          
+          // ✅ 초기 페이지 렌더링 완료 시 검색 입력 필드에 포커스
+          if (num === currentPage && num === initialPage) {
+            setTimeout(focusSearchInput, 100);
+          }
+          
           if (pageNumPending !== null) {
             const pending = pageNumPending;
             pageNumPending = null;

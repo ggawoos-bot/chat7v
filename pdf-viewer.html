@@ -317,6 +317,28 @@
     // 제목 설정
     document.getElementById('pdf-title').textContent = title;
     
+    // ✅ 검색 입력 필드 포커스 함수 (여러 시점에서 호출)
+    function focusSearchInput() {
+      const searchInput = document.getElementById('search-input');
+      if (searchInput && document.activeElement !== searchInput) {
+        try {
+          searchInput.focus();
+          console.log('✅ 검색 입력 필드에 포커스 설정');
+        } catch (e) {
+          console.warn('⚠️ 포커스 설정 실패:', e);
+        }
+      }
+    }
+    
+    // ✅ DOM 로드 완료 시 포커스 시도
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(focusSearchInput, 100);
+      });
+    } else {
+      setTimeout(focusSearchInput, 100);
+    }
+    
     let pdfDoc = null;
     let currentPage = initialPage;
     let numPages = 0;
@@ -397,6 +419,9 @@
       renderPage(currentPage);
       
       console.log('✅ PDF 로드 완료:', numPages, '페이지');
+      
+      // ✅ 검색 입력 필드에 자동 포커스 (PDF 로드 완료 후)
+      setTimeout(focusSearchInput, 300);
     }).catch((error) => {
       console.error('❌ PDF 로드 오류:', error);
       console.error('❌ PDF URL:', pdfUrl);
@@ -447,6 +472,7 @@
         
         renderTask.promise.then(() => {
           console.log(`✅ PDF 페이지 ${num} 캔버스 렌더링 완료`);
+          
           // 텍스트 레이어 렌더링 및 하이라이트
           return page.getTextContent();
         }).then((textContent) => {
@@ -492,6 +518,12 @@
           
           pageRendering = false;
           console.log(`✅ 페이지 ${num} 렌더링 완전히 완료`);
+          
+          // ✅ 초기 페이지 렌더링 완료 시 검색 입력 필드에 포커스
+          if (num === currentPage && num === initialPage) {
+            setTimeout(focusSearchInput, 100);
+          }
+          
           if (pageNumPending !== null) {
             const pending = pageNumPending;
             pageNumPending = null;
@@ -717,8 +749,14 @@
       searchButton.textContent = '검색중...';
       
       try {
-        // 모든 페이지에서 검색
-        for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        // ✅ 개선: 현재 페이지부터 검색 시작
+        const startPage = currentPage || 1;
+        console.log(`🔍 검색 시작 페이지: ${startPage} (현재 페이지부터)`);
+        
+        // 현재 페이지부터 끝까지, 그 다음 첫 페이지부터 현재 페이지 전까지 검색 (순환)
+        for (let i = 0; i < numPages; i++) {
+          const pageNum = ((startPage - 1 + i) % numPages) + 1;
+          
           try {
             const page = await pdfDoc.getPage(pageNum);
             const textContent = await page.getTextContent();
@@ -766,6 +804,18 @@
             console.warn(`⚠️ 페이지 ${pageNum} 검색 중 오류:`, error);
           }
         }
+        
+        // ✅ 검색 결과를 현재 페이지 기준으로 정렬 (현재 페이지부터 순서대로)
+        searchResults.sort((a, b) => {
+          if (a.page !== b.page) {
+            // 페이지 번호 순 (현재 페이지 기준 순환)
+            const aPageOrder = ((a.page - startPage + numPages) % numPages);
+            const bPageOrder = ((b.page - startPage + numPages) % numPages);
+            return aPageOrder - bPageOrder;
+          }
+          // 같은 페이지면 인덱스 순
+          return a.index - b.index;
+        });
         
         console.log(`✅ 검색 완료: ${searchResults.length}개 ${isMultiSearch ? '페이지' : '결과'} 발견`);
         
