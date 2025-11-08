@@ -379,8 +379,18 @@ function App() {
             
             for (const altUrl of alternativeUrls) {
               try {
+                // ✅ Worker 리셋 후 재설정 (새로운 Worker 경로 적용을 위해)
+                try {
+                  if (window.pdfjsLib.GlobalWorkerOptions.workerPort) {
+                    window.pdfjsLib.GlobalWorkerOptions.workerPort.terminate();
+                  }
+                  window.pdfjsLib.GlobalWorkerOptions.workerPort = null;
+                } catch (e) {
+                  // 리셋 실패해도 계속 진행
+                }
+                
                 window.pdfjsLib.GlobalWorkerOptions.workerSrc = altUrl;
-                console.log('🔄 대체 CDN 시도:', altUrl);
+                console.log('🔄 대체 CDN 시도 (Worker 리셋 후):', altUrl);
                 
                 const loadingTask2 = window.pdfjsLib.getDocument({
                   url: pdfUrl,
@@ -399,13 +409,23 @@ function App() {
             if (!pdf) {
               console.warn('⚠️ 모든 CDN 실패, 로컬 파일 시도');
               try {
+                // ✅ Worker 리셋 후 로컬 파일 설정 (새로운 Worker 경로 적용을 위해)
+                try {
+                  if (window.pdfjsLib.GlobalWorkerOptions.workerPort) {
+                    window.pdfjsLib.GlobalWorkerOptions.workerPort.terminate();
+                  }
+                  window.pdfjsLib.GlobalWorkerOptions.workerPort = null;
+                } catch (e) {
+                  // 리셋 실패해도 계속 진행
+                }
+                
                 const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
                 const localWorkerPath = isDevelopment 
                   ? '/assets/pdf.worker.min.js'
                   : '/chat7v/assets/pdf.worker.min.js';
                 
                 window.pdfjsLib.GlobalWorkerOptions.workerSrc = localWorkerPath;
-                console.log('🔄 로컬 Worker 파일 시도:', localWorkerPath);
+                console.log('🔄 로컬 Worker 파일 시도 (Worker 리셋 후):', localWorkerPath);
                 
                 const loadingTask3 = window.pdfjsLib.getDocument({
                   url: pdfUrl,
