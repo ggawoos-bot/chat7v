@@ -308,11 +308,13 @@ function App() {
           const pdfjsVersion = window.pdfjsLib.version || '5.4.296';
           console.log('📦 PDF.js 버전 감지:', pdfjsVersion);
           
-          // 여러 CDN 경로 시도 (우선순위 순, 감지된 버전 사용)
+          // 여러 CDN 경로 시도 (npm 패키지 우선, cdnjs는 마지막)
+          // ✅ npm 패키지 직접 사용 (가장 안정적, legacy 빌드 사용)
           const workerUrls = [
-            `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.worker.min.js`,
-            `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.js`,
-            `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.js`
+            `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
+            `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
+            // cdnjs는 마지막에 시도 (버전이 없을 수 있음)
+            `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.worker.min.js`
           ];
           
           // 첫 번째 CDN 설정
@@ -340,10 +342,12 @@ function App() {
             // ✅ 버전 감지
             const pdfjsVersion = window.pdfjsLib?.version || '5.4.296';
             
-            // 대체 CDN 시도
+            // 대체 CDN 시도 (npm 패키지 경로 사용, legacy 빌드)
             const alternativeUrls = [
-              `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.js`,
-              `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.js`
+              `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
+              `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
+              // cdnjs는 마지막에 시도
+              `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsVersion}/pdf.worker.min.js`
             ];
             
             for (const altUrl of alternativeUrls) {
