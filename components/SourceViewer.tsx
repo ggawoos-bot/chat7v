@@ -43,6 +43,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null); // ✅ 텍스트 뷰 스크롤 컨테이너 ref
   const chunkRefs = useRef<{ [key: string]: HTMLDivElement | null }>({}); // ✅ 청크 요소 ref 저장
   const wheelCooldownRef = useRef<boolean>(false); // 휠로 페이지 이동 쿨다운
+  const searchInputRef = useRef<HTMLInputElement>(null); // ✅ 검색 입력 필드 ref
   
   // ✅ PDF 페이지 번호로 그룹화
   const chunksByPage = React.useMemo(() => {
@@ -639,6 +640,19 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     }
   }, [pdfCurrentPage, pdfViewerMode, chunksByPage, chunks.length]);
 
+  // ✅ 참조 소스 클릭 시 검색 입력 필드에 자동 포커스
+  useEffect(() => {
+    if (selectedDocumentId && chunks.length > 0 && !isLoading && pdfViewerMode === 'text') {
+      // 문서가 로드되고 텍스트 뷰 모드일 때 포커스
+      setTimeout(() => {
+        if (searchInputRef.current && window.document.activeElement !== searchInputRef.current) {
+          searchInputRef.current.focus();
+          console.log('✅ 검색 입력 필드에 포커스 설정 (참조 소스 클릭 후)');
+        }
+      }, 200);
+    }
+  }, [selectedDocumentId, chunks.length, isLoading, pdfViewerMode]);
+
   if (!selectedDocumentId) {
     return (
       <div className="h-full flex items-center justify-center bg-brand-surface">
@@ -734,6 +748,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
           {/* 검색 입력 */}
           <form onSubmit={handleSearchSubmit} className="flex items-center gap-2 flex-1 min-w-0">
             <input
+              ref={searchInputRef}
               type="text"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
