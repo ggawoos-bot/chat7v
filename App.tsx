@@ -309,8 +309,11 @@ function App() {
           console.log('📦 PDF.js 버전 감지:', pdfjsVersion);
           
           // 여러 CDN 경로 시도 (npm 패키지 우선, cdnjs는 마지막)
-          // ✅ npm 패키지 직접 사용 (가장 안정적, legacy 빌드 사용)
+          // ✅ npm 패키지 직접 사용 (ESM 모듈 형식 .mjs 사용)
           const workerUrls = [
+            `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.mjs`,
+            `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.mjs`,
+            // legacy 빌드도 시도 (일부 환경에서 필요)
             `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
             `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
             // cdnjs는 마지막에 시도 (버전이 없을 수 있음)
@@ -342,8 +345,11 @@ function App() {
             // ✅ 버전 감지
             const pdfjsVersion = window.pdfjsLib?.version || '5.4.296';
             
-            // 대체 CDN 시도 (npm 패키지 경로 사용, legacy 빌드)
+            // 대체 CDN 시도 (npm 패키지 경로 사용, ESM 모듈 우선)
             const alternativeUrls = [
+              `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.mjs`,
+              `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/build/pdf.worker.min.mjs`,
+              // legacy 빌드도 시도
               `https://unpkg.com/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
               `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsVersion}/legacy/build/pdf.worker.min.js`,
               // cdnjs는 마지막에 시도
