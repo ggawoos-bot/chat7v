@@ -273,8 +273,8 @@ function App() {
   };
   
   /**
-   * PDF에서 문장을 검색하여 정확한 페이지 찾기 (주변 5페이지 집중 분석 + 단어 단위 매칭)
-   * 청크가 페이지 경계에 걸쳐있는 경우를 대비한 개선된 버전
+   * PDF에서 문장을 검색하여 정확한 페이지 찾기 (주변 3페이지 집중 분석 + 단어 단위 매칭)
+   * fallbackPage 기준 앞뒤 1페이지만 비교하여 정확도와 성능 최적화
    */
   const findExactPageInPDF = async (
     pdfUrl: string, 
@@ -282,7 +282,7 @@ function App() {
     fallbackPage: number
   ): Promise<number> => {
     try {
-      console.log('🔍 PDF에서 정확한 페이지 검색 시작 (주변 5페이지 분석 + 단어 매칭):', {
+      console.log('🔍 PDF에서 정확한 페이지 검색 시작 (주변 3페이지 분석 + 단어 매칭):', {
         searchSentence: searchSentence.substring(0, 50),
         fallbackPage
       });
@@ -421,16 +421,16 @@ function App() {
         return fallbackPage;
       }
 
-      // ✅ 개선: 주변 5페이지(-2, -1, 0, +1, +2) 집중 분석 (1-2페이지 차이 대응)
+      // ✅ 개선: 주변 3페이지(-1, 0, +1) 집중 분석 (앞뒤 1페이지만 비교)
       const candidatePages: number[] = [];
-      const startPage = Math.max(1, fallbackPage - 2);  // -1 → -2
-      const endPage = Math.min(pdf.numPages, fallbackPage + 2);  // +1 → +2
+      const startPage = Math.max(1, fallbackPage - 1);  // 앞 1페이지
+      const endPage = Math.min(pdf.numPages, fallbackPage + 1);  // 뒤 1페이지
       
       for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
         candidatePages.push(pageNum);
       }
       
-      console.log(`📄 주변 페이지 분석: ${candidatePages.join(', ')} (총 ${pdf.numPages}페이지 중, 범위: -2 ~ +2)`);
+      console.log(`📄 주변 페이지 분석: ${candidatePages.join(', ')} (총 ${pdf.numPages}페이지 중, 범위: -1 ~ +1)`);
 
       // ✅ 개선: 검색 문장을 단어로 분리 (줄바꿈/공백 문제 해결)
       const searchWords = normalizedSearch
@@ -444,7 +444,7 @@ function App() {
       
       console.log(`📝 검색 단어 (${searchWords.length}개):`, searchWords.slice(0, 10).join(', '));
 
-      // 주변 3페이지에서 매칭 점수 계산
+      // 주변 3페이지(-1, 0, +1)에서 매칭 점수 계산
       const pageScores: Array<{page: number, score: number, matchedWords: number, wordRatio: number}> = [];
       
       const pagePromises = candidatePages.map(pageNum => 
