@@ -295,6 +295,19 @@ function App() {
         return fallbackPage;
       }
 
+      // ✅ 개선: PDF.js Worker 설정 (CDN 실패 시 로컬 폴백)
+      try {
+        if (window.pdfjsLib && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          // CDN 경로 설정
+          const cdnWorkerUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.296/pdf.worker.min.js';
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = cdnWorkerUrl;
+          console.log('✅ PDF.js Worker 설정:', cdnWorkerUrl);
+        }
+      } catch (error) {
+        console.warn('⚠️ PDF.js Worker 설정 실패:', error);
+        // Worker 없이도 기본 기능은 작동하므로 계속 진행
+      }
+
       // PDF.js로 PDF 로드
       const loadingTask = window.pdfjsLib.getDocument({
         url: pdfUrl,
@@ -310,16 +323,16 @@ function App() {
         return fallbackPage;
       }
 
-      // ✅ 개선: 주변 3페이지(-1, 0, +1)만 집중 분석
+      // ✅ 개선: 주변 5페이지(-2, -1, 0, +1, +2) 집중 분석 (1-2페이지 차이 대응)
       const candidatePages: number[] = [];
-      const startPage = Math.max(1, fallbackPage - 1);
-      const endPage = Math.min(pdf.numPages, fallbackPage + 1);
+      const startPage = Math.max(1, fallbackPage - 2);  // -1 → -2
+      const endPage = Math.min(pdf.numPages, fallbackPage + 2);  // +1 → +2
       
       for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
         candidatePages.push(pageNum);
       }
       
-      console.log(`📄 주변 페이지 분석: ${candidatePages.join(', ')} (총 ${pdf.numPages}페이지 중)`);
+      console.log(`📄 주변 페이지 분석: ${candidatePages.join(', ')} (총 ${pdf.numPages}페이지 중, 범위: -2 ~ +2)`);
 
       // ✅ 개선: 검색 문장을 단어로 분리 (줄바꿈/공백 문제 해결)
       const searchWords = normalizedSearch
@@ -530,21 +543,17 @@ function App() {
   const extractSentenceFromResponse = (responseText: string, referenceNumber: number): string | null => {
     if (!responseText || referenceNumber <= 0) return null;
     
-    // 참조 번호 패턴 찾기 (예: **2**, ② 등)
+    // ✅ 개선: 더 다양한 참조 번호 패턴 지원
     const boldPattern = new RegExp(`\\*\\*${referenceNumber}\\*\\*`, 'g');
     const circlePattern = getCircleNumber(referenceNumber);
+    // ✅ 추가: 숫자만 있는 패턴 (예: " 5 ", "(5)" 등, 단독 숫자는 너무 많아서 제외)
+    const numberPattern = new RegExp(`[^0-9]${referenceNumber}[^0-9]`, 'g');
     
     let matchIndex = -1;
     let matchText = '';
     
-    // **12** 형식 찾기 (모든 매칭을 찾아서 가장 관련성 높은 것 선택)
-    const boldMatches = responseText.match(boldPattern);
-    if (boldMatches && boldMatches.length > 0) {
-      // 여러 매칭이 있으면 가장 의미 있는 위치 선택 (첫 번째 또는 문장 시작 근처)
-      matchIndex = responseText.indexOf(boldMatches[0]);
-      matchText = boldMatches[0];
-    } else if (circlePattern) {
-      // ⑫ 형식 찾기
+    // ✅ 우선순위: 원형 숫자 > 볼드 > 일반 숫자
+    if (circlePattern) {
       const circleIndex = responseText.indexOf(circlePattern);
       if (circleIndex >= 0) {
         matchIndex = circleIndex;
@@ -553,32 +562,70 @@ function App() {
     }
     
     if (matchIndex < 0) {
+      // **12** 형식 찾기
+      const boldMatches = responseText.match(boldPattern);
+      if (boldMatches && boldMatches.length > 0) {
+        matchIndex = responseText.indexOf(boldMatches[0]);
+        matchText = boldMatches[0];
+      }
+    }
+    
+    if (matchIndex < 0) {
+      // 일반 숫자 패턴 찾기 (공백으로 구분된 숫자)
+      const numberMatches = responseText.match(numberPattern);
+      if (numberMatches && numberMatches.length > 0) {
+        // 가장 가까운 매칭 찾기 (참조 번호는 보통 문장 끝에 위치)
+        let bestMatch = -1;
+        for (const match of numberMatches) {
+          const index = responseText.indexOf(match);
+          // 문장 끝 근처(마지막 100자 내)에 있으면 우선 선택
+          if (index >= responseText.length - 100) {
+            bestMatch = index;
+            matchText = match.trim();
+            break;
+          }
+          if (bestMatch < 0 || index > bestMatch) {
+            bestMatch = index;
+            matchText = match.trim();
+          }
+        }
+        if (bestMatch >= 0) {
+          matchIndex = bestMatch;
+        }
+      }
+    }
+    
+    if (matchIndex < 0) {
       console.log(`⚠️ 참조 번호 ${referenceNumber}를 응답에서 찾지 못함`);
       return null;
     }
     
-    // ✅ 개선: 참조 번호 주변의 문맥 추출 범위 확대 (앞 400자 ~ 뒤 400자)
-    const start = Math.max(0, matchIndex - 400);
-    const end = Math.min(responseText.length, matchIndex + matchText.length + 400);
+    // ✅ 개선: 참조 번호 앞 문장 우선 추출 (참조 번호는 보통 문장 끝에 위치)
+    const start = Math.max(0, matchIndex - 500); // 범위 확대
+    const end = Math.min(responseText.length, matchIndex + matchText.length + 200);
     const context = responseText.substring(start, end);
     
-    // 문장 경계에서 자르기
-    const sentences = context.split(/[.。!！?？\n]/).map(s => s.trim()).filter(s => s.length > 0);
+    // ✅ 개선: 더 정확한 문장 분할 (마크다운 리스트 고려)
+    const sentences = context
+      .split(/[.。!！?？\n]/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+    
     const refIndex = sentences.findIndex(s => s.includes(matchText));
     
     if (refIndex >= 0) {
-      // 참조 번호가 포함된 문장 또는 그 앞/뒤 문장
+      // ✅ 개선: 참조 번호 앞 문장 우선 (참조 번호는 보통 문장 끝에 위치)
       let targetSentence = '';
       
-      // ✅ 개선: 참조 번호 앞 문장 우선 (참조 번호는 보통 문장 끝에 위치)
       if (refIndex > 0) {
-        targetSentence = sentences[refIndex - 1];
-      } else if (refIndex < sentences.length - 1) {
-        const nextSentence = sentences[refIndex + 1];
-        if (nextSentence && nextSentence.length >= 15) {
-          targetSentence = nextSentence;
+        // 앞 문장이 더 길고 의미 있는 경우
+        const prevSentence = sentences[refIndex - 1];
+        const currentSentence = sentences[refIndex];
+        
+        if (prevSentence.length >= 20 && prevSentence.length > currentSentence.length) {
+          targetSentence = prevSentence;
         } else {
-          targetSentence = sentences[refIndex];
+          targetSentence = currentSentence;
         }
       } else {
         targetSentence = sentences[refIndex];
@@ -587,10 +634,11 @@ function App() {
       // ✅ 개선: 참조 번호 제거 및 마크다운 특수 문자 제거
       const cleaned = targetSentence
         .replace(/\*\*\d+\*\*/g, '') // **12** 제거
-        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚㉛㉜㉝㉞㉟]/g, '') // 원형 숫자 제거 (35개까지)
-        .replace(/^[>\s]*/, '') // ✅ 마크다운 인용(>) 및 선행 공백 제거
-        .replace(/\*\*/g, '') // ✅ 남은 ** 제거
-        .replace(/^[-•\s]*/, '') // ✅ 리스트 마커(-, •) 및 선행 공백 제거
+        .replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚㉛㉜㉝㉞㉟]/g, '') // 원형 숫자 제거
+        .replace(/^[>\s]*/, '') // 마크다운 인용(>) 및 선행 공백 제거
+        .replace(/\*\*/g, '') // 남은 ** 제거
+        .replace(/^[-•\s]*/, '') // 리스트 마커(-, •) 및 선행 공백 제거
+        .replace(/\s+/g, ' ') // 연속 공백 제거
         .trim();
       
       if (cleaned.length >= 15) {
@@ -732,58 +780,71 @@ function App() {
       const pageFromSentenceMap = (event.detail as any).pageFromSentenceMap;
       let actualPage = page || logicalPageNumber || 1;
       
-      // ✅ 1순위: sentencePageMap에서 찾은 페이지 사용
+      // ✅ 1순위: sentencePageMap에서 찾은 페이지를 fallback으로 사용
       if (pageFromSentenceMap) {
         actualPage = pageFromSentenceMap;
-        console.log('✅ sentencePageMap에서 페이지 찾음:', actualPage);
-      } else {
-        // ✅ 2순위: 기존 방식으로 PDF 검색 (폴백)
-        // ✅ 개선: referencedSentence가 없어도 AI 응답에서 문장 추출 시도
-        let searchSentence = referencedSentence;
-        
-        // referencedSentence가 없으면 AI 응답에서 추출 시도
-        if (!searchSentence || searchSentence.length < 15) {
-          if (responseText && referenceNumber > 0) {
-            const extractedSentence = extractSentenceFromResponse(responseText, referenceNumber);
-            if (extractedSentence && extractedSentence.length >= 15) {
-              searchSentence = extractedSentence;
-              console.log('✅ AI 응답에서 문장 추출 성공:', extractedSentence.substring(0, 50));
-            }
+        console.log('✅ sentencePageMap에서 페이지 찾음 (검증 예정):', actualPage);
+      }
+
+      // ✅ 개선: pageFromSentenceMap이 있어도 PDF 검색으로 검증/보정
+      // ✅ 검색 문장 추출 (pageFromSentenceMap이 있어도 실행)
+      let searchSentence = referencedSentence;
+      
+      // referencedSentence가 없으면 AI 응답에서 추출 시도
+      if (!searchSentence || searchSentence.length < 15) {
+        if (responseText && referenceNumber > 0) {
+          const extractedSentence = extractSentenceFromResponse(responseText, referenceNumber);
+          if (extractedSentence && extractedSentence.length >= 15) {
+            searchSentence = extractedSentence;
+            console.log('✅ AI 응답에서 문장 추출 성공:', extractedSentence.substring(0, 50));
           }
         }
-        
-        // 여전히 없으면 extractSearchText로 검색 문장 추출
-        if (!searchSentence || searchSentence.length < 15) {
-          searchSentence = extractSearchText(chunkContent, responseText, referenceNumber || 0, referencedSentence);
-          console.log('✅ extractSearchText로 문장 추출:', searchSentence?.substring(0, 50));
-        }
-        
-        // ✅ 개선: searchSentence가 있으면 페이지 검색 실행 (referencedSentence 조건 완화)
-        if (filename && searchSentence && searchSentence.length >= 15) {
-          try {
-            const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-            const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
-            const encodedFilename = encodeURIComponent(filename);
-            const pdfUrl = `${window.location.origin}${basePath}/${encodedFilename}`;
-            
-            console.log('🔍 정확한 페이지 검색 시작:', {
-              searchSentence: searchSentence.substring(0, 50),
-              fallbackPage: actualPage,
-              source: referencedSentence ? 'referencedSentence' : (responseText ? 'extracted' : 'extractSearchText')
+      }
+      
+      // 여전히 없으면 extractSearchText로 검색 문장 추출
+      if (!searchSentence || searchSentence.length < 15) {
+        searchSentence = extractSearchText(chunkContent, responseText, referenceNumber || 0, referencedSentence);
+        console.log('✅ extractSearchText로 문장 추출:', searchSentence?.substring(0, 50));
+      }
+      
+      // ✅ 개선: searchSentence가 있으면 항상 PDF 검색 실행 (pageFromSentenceMap 검증/보정)
+      if (filename && searchSentence && searchSentence.length >= 15) {
+        try {
+          const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+          const basePath = isDevelopment ? '/pdf' : '/chat7v/pdf';
+          const encodedFilename = encodeURIComponent(filename);
+          const pdfUrl = `${window.location.origin}${basePath}/${encodedFilename}`;
+          
+          console.log('🔍 정확한 페이지 검색 시작 (pageFromSentenceMap 검증):', {
+            searchSentence: searchSentence.substring(0, 50),
+            fallbackPage: actualPage,
+            pageFromSentenceMap: pageFromSentenceMap || '없음',
+            source: referencedSentence ? 'referencedSentence' : (responseText ? 'extracted' : 'extractSearchText')
+          });
+          
+          // PDF에서 정확한 페이지 검색 (pageFromSentenceMap이 있으면 그것을 fallback으로 사용)
+          const foundPage = await findExactPageInPDF(pdfUrl, searchSentence, actualPage);
+          
+          // ✅ 검색 결과가 pageFromSentenceMap과 다르면 로그 출력
+          if (pageFromSentenceMap && foundPage !== pageFromSentenceMap) {
+            console.log('✅ 페이지 보정 완료:', {
+              pageFromSentenceMap,
+              foundPage,
+              차이: foundPage - pageFromSentenceMap
             });
-            
-            // PDF에서 정확한 페이지 검색
-            actualPage = await findExactPageInPDF(pdfUrl, searchSentence, actualPage);
-            
-            console.log('✅ 페이지 검색 완료:', {
-              originalPage: page,
-              actualPage: actualPage,
-              changed: actualPage !== page
-            });
-          } catch (error) {
-            console.warn('⚠️ 페이지 검색 실패, 기본 페이지 사용:', error);
-            // 오류 시 원래 페이지 사용
           }
+          
+          actualPage = foundPage;
+          
+          console.log('✅ 페이지 검색 완료:', {
+            originalPage: page,
+            pageFromSentenceMap: pageFromSentenceMap || '없음',
+            actualPage: actualPage,
+            changed: actualPage !== page
+          });
+        } catch (error) {
+          console.warn('⚠️ 페이지 검색 실패, 기본 페이지 사용:', error);
+          // 오류 시 원래 페이지 사용
         }
       }
       
