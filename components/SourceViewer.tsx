@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { FirestoreService, PDFChunk, PDFDocument } from '../services/firestoreService';
 import EmbedPdfViewer from './EmbedPdfViewer';
+import { highlightSearchTerm, highlightQuestionWords, highlightLawAndArticles, normalizeWhitespace } from '../utils/textHighlighting';
 
 interface SourceViewerProps {
   selectedDocumentId?: string;
@@ -148,304 +149,6 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     };
   };
 
-  // 텍스트에서 검색어를 하이라이트 처리하는 함수
-  const highlightSearchTerm = (text: string, searchTerm: string) => {
-    if (!searchTerm || !text) return text;
-
-    // 원본 검색어 사용 (대소문자 구분 안 함)
-    const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(${escapedSearchTerm})`, 'gi');
-    const parts = text.split(regex);
-
-    return parts.map((part, index) => {
-      // 각 부분이 검색어와 일치하는지 확인 (대소문자 무시)
-      const isMatch = part.toLowerCase() === searchTerm.toLowerCase();
-      return isMatch ? (
-        <span key={index} className="search-highlight bg-yellow-200 text-yellow-900 font-medium px-0.5 rounded">
-          {part}
-        </span>
-      ) : (
-        part
-      );
-    });
-  };
-
-  // ✅ 질문 내용에서 의미있는 단어들을 추출하여 하이라이트하는 함수
-  const highlightQuestionWords = (text: string, question: string) => {
-    if (!question || !text) {
-      console.log('🔍 highlightQuestionWords: question이나 text가 없음', { question, textLength: text?.length });
-      return text;
-    }
-    
-    console.log('🔍 highlightQuestionWords 호출:', { question, textLength: text.length });
-
-    // 한국어 조사 및 불용어
-    const stopWords = ['은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '만', '조차', '마저', '까지', '부터', '에서', '에게', '한테', '께', '로', '으로', '것', '수', '있', '없', '되', '하', '등', '때', '경우', '위해', '때문', '인가', '인가요', '인지', '인지요', '있습니', '없습니', '입니다', '까요', '나요', '네요', '세요', '주세요', '해주세요', '이야', '이야요', '야', '어', '요'];
-    
-    // 1. 질문을 공백과 구두점으로 분리
-    const wordsFromSpaces = question
-      .replace(/[^\w가-힣\s]/g, ' ') // 구두점 제거
-      .split(/\s+/) // 공백으로 분리
-      .filter(word => word.trim().length >= 2); // 2글자 이상만
-    
-    // 2. 한국어 단어에서 조사 제거 (예: "어린이집은" → "어린이집")
-    const wordsWithoutParticles = wordsFromSpaces.map(word => {
-      // 조사가 붙어있는 경우 제거 (은, 는, 이, 가, 을, 를, 에, 의, 와, 과, 도, 만 등)
-      for (const particle of ['은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '만', '에서', '에게', '한테', '께', '로', '으로']) {
-        if (word.endsWith(particle) && word.length > particle.length) {
-          return word.slice(0, -particle.length);
-        }
-      }
-      return word;
-    }).filter(word => word.length >= 2 && !stopWords.includes(word));
-    
-    // 3. 질문 자체에서 2글자 이상의 연속된 한글/영문 추출 (공백 없이도 작동)
-    const continuousWords: string[] = [];
-    const koreanWordRegex = /[가-힣]{2,}/g;
-    const englishWordRegex = /[A-Za-z]{2,}/g;
-    
-    let match;
-    while ((match = koreanWordRegex.exec(question)) !== null) {
-      const word = match[0];
-      // 조사 제거
-      let cleanedWord = word;
-      for (const particle of ['은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '만', '에서', '에게', '한테', '께', '로', '으로', '이야', '이야요', '야']) {
-        if (cleanedWord.endsWith(particle) && cleanedWord.length > particle.length) {
-          cleanedWord = cleanedWord.slice(0, -particle.length);
-        }
-      }
-      if (cleanedWord.length >= 2 && !stopWords.includes(cleanedWord) && !continuousWords.includes(cleanedWord)) {
-        continuousWords.push(cleanedWord);
-      }
-    }
-    
-    while ((match = englishWordRegex.exec(question)) !== null) {
-      const word = match[0].toLowerCase();
-      if (!stopWords.includes(word) && !continuousWords.includes(word)) {
-        continuousWords.push(word);
-      }
-    }
-    
-    // 4. 모든 단어 합치기 (중복 제거)
-    const allWords = Array.from(new Set([...wordsWithoutParticles, ...continuousWords]))
-      .filter(word => word.length >= 2 && !stopWords.includes(word));
-
-    console.log('🔍 추출된 단어들:', { allWords, wordsWithoutParticles, continuousWords });
-
-    if (allWords.length === 0) {
-      console.log('⚠️ 추출된 단어가 없음');
-      return text;
-    }
-
-    // 각 단어를 정규식으로 이스케이프하고 패턴 생성
-    const patterns = allWords.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    
-    // 모든 패턴을 하나의 정규식으로 결합
-    const combinedPattern = `(${patterns.join('|')})`;
-    const regex = new RegExp(combinedPattern, 'gi');
-
-    // 텍스트를 분할하고 매칭된 부분을 하이라이트
-    const parts = text.split(regex);
-    
-    return parts.map((part, index) => {
-      // 분할된 부분이 정규식에 매칭된 단어인지 확인 (홀수 인덱스는 매칭된 부분)
-      const isMatched = index % 2 === 1;
-      
-      return isMatched ? (
-        <span key={index} className="question-highlight bg-blue-200 text-blue-900 font-medium px-0.5 rounded">
-          {part}
-        </span>
-      ) : (
-        part
-      );
-    });
-  };
-
-  // ✅ 법령 이름과 조항 제목을 강조하는 함수 (React 노드 반환)
-  const highlightLawAndArticles = (text: string | React.ReactNode): React.ReactNode => {
-    // 문자열로 변환
-    let textString = '';
-    if (typeof text === 'string') {
-      textString = text;
-    } else if (React.isValidElement(text)) {
-      // React 요소인 경우 텍스트 추출 (간단한 경우만)
-      textString = String(text);
-    } else if (Array.isArray(text)) {
-      textString = text.map(node => typeof node === 'string' ? node : '').join('');
-    }
-    
-    if (!textString) return text;
-    
-    // 법령 이름 패턴: "XXX법", "XXX시행령", "XXX시행규칙" 등 (줄 시작)
-    const lawNamePattern = /(^|\n)([가-힣\s]+법|([가-힣\s]+시행령)|([가-힣\s]+시행규칙))(?=\s|$|\[)/m;
-    
-    // 조항 패턴: "제N조", "제N조의N", "제N조의N(제목)" 등
-    const articlePattern = /(제\d+조(?:의\d+)?(?:\([^)]+\))?)/g;
-    
-    const parts: React.ReactNode[] = [];
-    const matches: Array<{ type: 'law' | 'article'; index: number; length: number; text: string }> = [];
-    
-    // 법령 이름 찾기 (각 줄의 시작에서)
-    const lines = textString.split('\n');
-    let offset = 0;
-    lines.forEach((line, lineIdx) => {
-      const lawMatch = line.match(/^([가-힣\s]+법|([가-힣\s]+시행령)|([가-힣\s]+시행규칙))(?=\s|$|\[)/);
-      if (lawMatch && lawMatch[0]) {
-        matches.push({
-          type: 'law',
-          index: offset + line.indexOf(lawMatch[0]),
-          length: lawMatch[0].length,
-          text: lawMatch[0]
-        });
-      }
-      offset += line.length + 1; // +1 for newline
-    });
-    
-    // 조항 찾기
-    let match;
-    while ((match = articlePattern.exec(textString)) !== null) {
-      if (match.index !== undefined && match[0]) {
-        matches.push({
-          type: 'article',
-          index: match.index,
-          length: match[0].length,
-          text: match[0]
-        });
-      }
-    }
-    
-    // 인덱스 순으로 정렬
-    matches.sort((a, b) => a.index - b.index);
-    
-    // 겹치는 부분 제거
-    const processedMatches: typeof matches = [];
-    for (let i = 0; i < matches.length; i++) {
-      const current = matches[i];
-      const prev = processedMatches[processedMatches.length - 1];
-      
-      if (!prev || current.index >= prev.index + prev.length) {
-        processedMatches.push(current);
-      }
-    }
-    
-    // 텍스트 분할 및 하이라이트
-    let currentIndex = 0;
-    processedMatches.forEach((matchItem, idx) => {
-      const { index, length, text: matchedText, type } = matchItem;
-      
-      // 매치 전 텍스트 추가
-      if (index > currentIndex) {
-        const beforeText = textString.substring(currentIndex, index);
-        if (beforeText) {
-          parts.push(<React.Fragment key={`before-${idx}`}>{beforeText}</React.Fragment>);
-        }
-      }
-      
-      // 매치된 부분 하이라이트
-      parts.push(
-        <span key={`${type}-${idx}`} className="text-blue-600 font-bold text-base">
-          {matchedText}
-        </span>
-      );
-      
-      currentIndex = index + length;
-    });
-    
-    // 남은 텍스트 추가
-    if (currentIndex < textString.length) {
-      const remainingText = textString.substring(currentIndex);
-      if (remainingText) {
-        parts.push(<React.Fragment key="remaining">{remainingText}</React.Fragment>);
-      }
-    }
-    
-    // 매치가 없으면 원본 반환
-    return parts.length > 0 ? <>{parts}</> : text;
-  };
-
-  // ✅ 공백 정규화 함수: 명확한 문단/항목 구분만 유지, 나머지는 공백으로
-  const normalizeWhitespace = (text: string): string => {
-    if (!text) return text;
-    
-    // 각 줄 내부의 공백과 탭 정규화
-    const lines = text.split('\n').map(line => line.replace(/[ \t]+/g, ' ').trim());
-    
-    const result: string[] = [];
-    let currentParagraph = ''; // 현재 누적 중인 문단
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const nextLine = lines[i + 1];
-      
-      // 1. 빈 줄은 문단 구분으로 처리
-      if (line === '') {
-        // 누적된 문단이 있으면 저장
-        if (currentParagraph) {
-          result.push(currentParagraph.trim());
-          currentParagraph = '';
-        }
-        result.push(''); // 빈 줄 유지
-        continue;
-      }
-      
-      // 2. 명확한 새 항목 패턴이면 줄바꿈 유지
-      // 숫자, 한자 숫자, 불릿(•, ·), 하이픈(-), 제목(■, ○), 질문(Q.), "제N조" 패턴, 번호(1), 2) 등
-      const isNewItem = /^[\d①②③④⑤⑥⑦⑧⑨⑩·\-\•■○]/.test(line) || 
-                       /^제\d+[의조항호의]/.test(line) ||              // 제6조의3, 제1항, 제6의2호 등
-                       /^\d+[\.\）\)]/.test(line) ||                    // 1., 2), 1) 등
-                       /^\d+의\d+\./.test(line) ||                     // 6의2., 1의1. 등
-                       /^[가-힣]\./.test(line) ||                       // 가., 나., 다. 등 (한글 항목)
-                       /^-{4,}\.?/.test(line) ||                        // 구분선: ---- 이상
-                       /^Q\./.test(line) ||                             // Q. 질문
-                       /^[A-Z가-힣]{2,}\s*$/.test(line);                 // 제목(2글자 이상 한글/영문만)
-      
-      // 3. 현재 줄이 새 항목이면 줄바꿈 유지
-      if (isNewItem) {
-        // 누적된 문단이 있으면 저장
-        if (currentParagraph) {
-          result.push(currentParagraph.trim());
-          currentParagraph = '';
-        }
-        result.push(line);
-        continue;
-      }
-      
-      // 4. 다음 줄이 없거나 빈 줄이면 줄바꿈 유지
-      if (!nextLine || nextLine === '') {
-        currentParagraph += (currentParagraph ? ' ' : '') + line;
-        result.push(currentParagraph.trim());
-        currentParagraph = '';
-        continue;
-      }
-      
-      // 5. 다음 줄이 새 항목이면 줄바꿈 유지
-      const nextIsNewItem = /^[\d①②③④⑤⑥⑦⑧⑨⑩·\-\•■○]/.test(nextLine) ||
-                            /^제\d+[의조항호의]/.test(nextLine) ||              // 제6조의3, 제1항, 제6의2호 등
-                            /^\d+[\.\）\)]/.test(nextLine) ||                    // 1., 2), 1) 등
-                            /^\d+의\d+\./.test(nextLine) ||                     // 6의2., 1의1. 등
-                            /^[가-힣]\./.test(nextLine) ||                       // 가., 나., 다. 등 (한글 항목)
-                            /^-{4,}\.?/.test(nextLine) ||                        // 구분선: ---- 이상
-                            /^Q\./.test(nextLine) ||                             // Q. 질문
-                            /^[A-Z가-힣]{2,}\s*$/.test(nextLine);                 // 제목(2글자 이상 한글/영문만)
-      
-      if (nextIsNewItem) {
-        currentParagraph += (currentParagraph ? ' ' : '') + line;
-        result.push(currentParagraph.trim());
-        currentParagraph = '';
-        continue;
-      }
-      
-      // 6. 그 외는 공백으로 연결 (현재 문단에 누적)
-      currentParagraph += (currentParagraph ? ' ' : '') + line;
-    }
-    
-    // 마지막 누적된 문단이 있으면 추가
-    if (currentParagraph) {
-      result.push(currentParagraph.trim());
-    }
-    
-    return result.join('\n');
-  };
 
   // 검색 결과로 이동하는 헬퍼 함수
   const navigateToSearchResult = (match: PDFChunk, index: number) => {
@@ -462,71 +165,163 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     suppressObserverRef.current = true;
     if (onPdfPageChange) onPdfPageChange(targetPage);
     
+    // ✅ 요소가 화면에 보이는지 확인하는 함수
+    const isElementVisible = (element: HTMLElement, container: HTMLElement): boolean => {
+      const containerRect = container.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      
+      // 요소가 컨테이너의 가시 영역 내에 있는지 확인 (일부만 보여도 true)
+      return (
+        elementRect.top < containerRect.bottom &&
+        elementRect.bottom > containerRect.top &&
+        elementRect.left < containerRect.right &&
+        elementRect.right > containerRect.left
+      );
+    };
+    
     // 페이지 변경 후 DOM 업데이트를 기다린 후 스크롤
-    const scrollToMatch = () => {
+    const scrollToMatch = (attempt: number = 0) => {
       const el = window.document.getElementById(`chunk-${match.id}`);
       const container = scrollContainerRef.current;
       
-      if (el && container) {
-        // 스크롤 컨테이너 내에서 요소의 위치 계산
-        const containerRect = container.getBoundingClientRect();
-        const elementRect = el.getBoundingClientRect();
-        const scrollTop = container.scrollTop;
-        
-        // 요소가 컨테이너의 중앙에 오도록 스크롤 계산
-        const targetScrollTop = scrollTop + elementRect.top - containerRect.top - (containerRect.height / 2) + (elementRect.height / 2);
-        
-        // 부드럽게 스크롤
-        container.scrollTo({
-          top: targetScrollTop,
-          behavior: 'smooth'
-        });
-        
-        // 하이라이트 효과 제거 (텍스트 색상 변경으로만 표시)
-        
-        // 스크롤 완료 후 observer 재개
-        setTimeout(() => {
+      if (!el) {
+        // 요소를 찾지 못한 경우 재시도
+        if (attempt < 3) {
+          setTimeout(() => scrollToMatch(attempt + 1), 200);
+        } else {
           suppressObserverRef.current = false;
-        }, 500);
+        }
+        return;
+      }
+      
+      if (container) {
+        // ✅ 요소가 화면에 보이는지 확인
+        const isVisible = isElementVisible(el, container);
+        
+        if (!isVisible || attempt === 0) {
+          // 요소가 가려져 있거나 첫 시도인 경우 스크롤
+          const containerRect = container.getBoundingClientRect();
+          const elementRect = el.getBoundingClientRect();
+          const scrollTop = container.scrollTop;
+          
+          // ✅ 요소가 컨테이너의 중앙에 오도록 스크롤 계산 (여유 공간 추가)
+          const offset = 50; // 상하 여유 공간
+          const targetScrollTop = scrollTop + elementRect.top - containerRect.top - (containerRect.height / 2) + (elementRect.height / 2) - offset;
+          
+          // ✅ 즉시 스크롤 (smooth가 실패할 수 있으므로)
+          container.scrollTop = targetScrollTop;
+          
+          // ✅ 스크롤 후 다시 확인하여 확실히 보이도록 함
+          setTimeout(() => {
+            const newElementRect = el.getBoundingClientRect();
+            const newContainerRect = container.getBoundingClientRect();
+            const isNowVisible = (
+              newElementRect.top < newContainerRect.bottom &&
+              newElementRect.bottom > newContainerRect.top
+            );
+            
+            if (!isNowVisible && attempt < 2) {
+              // 여전히 보이지 않으면 다시 시도
+              scrollToMatch(attempt + 1);
+            } else {
+              // ✅ 부드러운 스크롤로 최종 조정
+              container.scrollTo({
+                top: container.scrollTop,
+                behavior: 'smooth'
+              });
+              
+              // 스크롤 완료 후 observer 재개
+              setTimeout(() => {
+                suppressObserverRef.current = false;
+              }, 500);
+            }
+          }, 100);
+        } else {
+          // 이미 보이는 경우 observer만 재개
+          suppressObserverRef.current = false;
+        }
       } else if (el) {
         // scrollContainerRef가 없으면 기본 방법 사용
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // ✅ 더 확실한 스크롤을 위해 여러 옵션 시도
+        el.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'center',
+          inline: 'nearest'
+        });
+        
+        // ✅ 추가 확인: scrollIntoView가 실패할 수 있으므로 직접 스크롤도 시도
+        setTimeout(() => {
+          const parent = el.offsetParent as HTMLElement;
+          if (parent) {
+            const elementTop = el.offsetTop;
+            const parentHeight = parent.clientHeight;
+            const scrollTop = elementTop - (parentHeight / 2) + (el.offsetHeight / 2);
+            parent.scrollTop = scrollTop;
+          }
+        }, 300);
+        
         suppressObserverRef.current = false;
       }
     };
     
-    // 페이지 변경 후 충분한 시간을 기다려서 DOM이 업데이트되도록 함
+    // ✅ 페이지 변경 후 충분한 시간을 기다려서 DOM이 업데이트되도록 함
+    // 여러 번 시도하여 확실히 스크롤
     setTimeout(() => {
-      scrollToMatch();
-      // 만약 첫 번째 시도에서 요소를 찾지 못하면 추가 시도
-      setTimeout(() => {
-        const el = window.document.getElementById(`chunk-${match.id}`);
-        if (el && scrollContainerRef.current) {
-          scrollToMatch();
-        }
-      }, 200);
+      scrollToMatch(0);
     }, 400);
+    
+    // ✅ 추가 시도: DOM 업데이트가 늦을 수 있으므로
+    setTimeout(() => {
+      scrollToMatch(1);
+    }, 800);
+    
+    // ✅ 최종 시도: 확실히 보이도록
+    setTimeout(() => {
+      scrollToMatch(2);
+    }, 1200);
   };
 
   // 간단 검색: 텍스트 포함 청크를 찾아 해당 페이지로 이동 후 스크롤
   const handleSearchSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const query = (searchText || '').trim().toLowerCase();
+    const query = (searchText || '').trim();
     if (!query || chunks.length === 0) return;
     
     try {
       setIsSearching(true);
       
+      // ✅ 방안 1: 공백으로 구분된 단어들을 AND 조건으로 검색
+      const searchTerms = query
+        .split(/\s+/) // 공백(연속 공백 포함)으로 분할
+        .map(term => term.trim().toLowerCase())
+        .filter(term => term.length > 0); // 빈 문자열 제거
+      
+      const normalizedQuery = query.toLowerCase();
+      
       // 검색어가 변경되었거나 처음 검색하는 경우
-      if (query !== lastSearchQuery) {
-        // 모든 매칭 청크 찾기
-        const matches = chunks.filter((c) => (c.content || '').toLowerCase().includes(query));
+      if (normalizedQuery !== lastSearchQuery) {
+        // ✅ AND 조건: 모든 검색어가 포함된 청크만 찾기
+        const matches = chunks.filter((c) => {
+          const content = (c.content || '').toLowerCase();
+          
+          // 단일 검색어인 경우 (공백이 없는 경우)
+          if (searchTerms.length === 1) {
+            return content.includes(searchTerms[0]);
+          }
+          
+          // 복수 검색어인 경우: 모든 단어가 포함되어야 함 (AND 조건)
+          return searchTerms.every(term => content.includes(term));
+        });
+        
         setSearchResults(matches);
         setCurrentSearchIndex(0);
-        setLastSearchQuery(query);
+        setLastSearchQuery(normalizedQuery);
         
         if (matches.length > 0) {
           navigateToSearchResult(matches[0], 0);
+        } else {
+          // 검색 결과가 없을 때 사용자에게 알림
+          console.log(`⚠️ 검색 결과 없음: "${query}" (${searchTerms.length}개 단어 모두 포함 필요)`);
         }
       } else {
         // 같은 검색어로 다음 결과 찾기
@@ -888,7 +683,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                         : `${window.location.origin}${pdfUrl}`;
                       
                       // 새 창에서 PDF 뷰어 열기
-                      const viewerUrl = `/pdf-viewer.html?url=${encodeURIComponent(absolutePdfUrl)}&page=${pdfCurrentPage}&title=${encodeURIComponent(documentTitle || 'PDF 문서')}`;
+                      const viewerUrl = `/chat7v/pdf-viewer.html?url=${encodeURIComponent(absolutePdfUrl)}&page=${pdfCurrentPage}&title=${encodeURIComponent(documentTitle || 'PDF 문서')}`;
                       
                       console.log('📄 PDF 뷰어 새 창 열기:', viewerUrl);
                       console.log('📄 PDF 파일 URL:', absolutePdfUrl);
@@ -1074,11 +869,11 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
                   {/* 메타데이터 */}
                   <div className="flex items-center gap-2 text-xs text-brand-text-secondary mb-2">
                     {chunk.metadata.page && (
-                      <span className="inline-flex items-center gap-1">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <span className="w-full flex items-center justify-center gap-1 text-base font-bold text-brand-text-primary">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        페이지 {chunk.metadata.page}
+                        - {chunk.metadata.page} -
                       </span>
                     )}
                     {chunk.metadata.section && (
@@ -1170,4 +965,3 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
     </div>
   );
 };
-
