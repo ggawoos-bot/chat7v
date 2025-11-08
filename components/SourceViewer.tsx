@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { FirestoreService, PDFChunk, PDFDocument } from '../services/firestoreService';
 import EmbedPdfViewer from './EmbedPdfViewer';
-import { highlightSearchTerm, highlightQuestionWords, highlightLawAndArticles, normalizeWhitespace } from '../utils/textHighlighting.tsx';
+import { highlightSearchTerm, highlightQuestionWords, highlightLawAndArticles, normalizeWhitespace } from '../utils/textHighlighting';
 
 interface SourceViewerProps {
   selectedDocumentId?: string;
