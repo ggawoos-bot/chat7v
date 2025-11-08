@@ -839,8 +839,9 @@ function App() {
     
     // 1순위: referencedSentence 사용 (AI가 실제로 인용한 문장)
     if (referencedSentence && referencedSentence.length >= 15) {
-      console.log('✅ [1순위] referencedSentence 사용:', referencedSentence.substring(0, 60));
-      return referencedSentence.substring(0, 60); // 최대 60자
+      console.log('✅ [1순위] referencedSentence 사용:', referencedSentence.substring(0, 100));
+      // ✅ 60자 → 100자로 확대 (더 많은 컨텍스트 포함)
+      return referencedSentence.substring(0, 100);
     } else if (referencedSentence) {
       console.log('⚠️ referencedSentence가 너무 짧음:', referencedSentence.substring(0, 30));
     } else {
