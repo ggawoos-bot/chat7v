@@ -2029,33 +2029,42 @@ Here is the source material:
     return pageNumber;
   }
 
-  // Firestore에서 데이터 로드 (최우선)
+  // Firestore에서 데이터 로드 (캐시 우선 전략)
   async loadFromFirestore(): Promise<string | null> {
     try {
       console.log('🔍 Firestore에서 데이터 로드 시도...');
       
-      // Firestore 상태 확인
-      console.log('🔍 Firestore 상태 확인 중...');
-      const stats = await this.firestoreService.getDatabaseStats();
-      console.log('🔍 Firestore 상태:', stats);
-      
-      if (stats.totalChunks === 0) {
-        console.log('⚠️ Firestore에 데이터가 없습니다.');
-        return null;
-      }
-      
-      // ✅ 개선: 초기화 시에는 청크만 로드, fullText 생성하지 않음
-      // fullText는 질문 발생 시 ContextSelector에서 필요한 청크만 선택하여 생성
-      console.log('🔍 PDF 문서 목록 가져오기...');
+      // ✅ 1. IndexedDB 캐시 우선 확인 (getAllDocuments가 자동으로 캐시 확인)
+      console.log('🔍 PDF 문서 목록 가져오기 (캐시 우선)...');
       const allDocuments = await this.firestoreService.getAllDocuments();
       console.log(`🔍 PDF 문서 ${allDocuments.length}개 발견:`, allDocuments.map(d => d.filename));
+      
+      if (allDocuments.length === 0) {
+        // 문서가 없으면 Firestore 상태 확인
+        console.log('🔍 Firestore 상태 확인 중...');
+        const stats = await this.firestoreService.getDatabaseStats();
+        console.log('🔍 Firestore 상태:', stats);
+        
+        if (stats.totalChunks === 0) {
+          console.log('⚠️ Firestore와 캐시 모두에 데이터가 없습니다.');
+          return null;
+        }
+        // stats에 데이터가 있으면 다시 getAllDocuments 시도 (Firestore에서 가져옴)
+        const retryDocs = await this.firestoreService.getAllDocuments();
+        if (retryDocs.length === 0) {
+          console.log('⚠️ Firestore에 데이터가 있지만 로드할 수 없습니다.');
+          return null;
+        }
+        allDocuments.push(...retryDocs);
+      }
       
       const chunks: Chunk[] = [];
       
       for (const doc of allDocuments) {
         console.log(`🔍 문서 청크 가져오기: ${doc.filename} (${doc.id})`);
+        // ✅ getChunksByDocument는 자동으로 캐시를 먼저 확인함
         const docChunks = await this.firestoreService.getChunksByDocument(doc.id);
-        console.log(`🔍 ${doc.filename}에서 ${docChunks.length}개 청크 발견`);
+        console.log(`🔍 ${doc.filename}에서 ${docChunks.length}개 청크 발견 (캐시 또는 Firestore)`);
         
         // ✅ 전체 텍스트 길이 계산 (청크의 endPos 최대값 사용)
         const totalTextLength = docChunks.length > 0

@@ -706,14 +706,41 @@ export class FirestoreService {
   }
 
   /**
-   * 데이터베이스 상태 확인
+   * 데이터베이스 상태 확인 (IndexedDB 캐시 우선 확인)
    */
   async getDatabaseStats(): Promise<{
     totalChunks: number;
     totalDocuments: number;
     lastUpdated: string;
+    source: 'firestore' | 'cache';
   }> {
     try {
+      // ✅ 1. 먼저 IndexedDB 캐시 확인
+      const cachedDocs = await this.firestoreCache.getCachedDocuments();
+      if (cachedDocs && cachedDocs.length > 0) {
+        console.log(`📦 IndexedDB 캐시에서 ${cachedDocs.length}개 문서 발견`);
+        
+        // 캐시된 문서의 청크 수 계산
+        let totalChunks = 0;
+        for (const doc of cachedDocs) {
+          const cachedChunks = await this.firestoreCache.getCachedChunks(doc.id);
+          if (cachedChunks) {
+            totalChunks += cachedChunks.length;
+          }
+        }
+        
+        if (totalChunks > 0) {
+          console.log(`📦 IndexedDB 캐시에서 총 ${totalChunks}개 청크 발견`);
+          return {
+            totalChunks,
+            totalDocuments: cachedDocs.length,
+            lastUpdated: new Date().toISOString(),
+            source: 'cache'
+          };
+        }
+      }
+      
+      // ✅ 2. 캐시가 없으면 Firestore 확인
       const [chunksSnapshot, docsSnapshot] = await Promise.all([
         getDocs(collection(db, this.chunksCollection)),
         getDocs(collection(db, this.documentsCollection))
@@ -722,14 +749,43 @@ export class FirestoreService {
       return {
         totalChunks: chunksSnapshot.size,
         totalDocuments: docsSnapshot.size,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
+        source: 'firestore'
       };
     } catch (error) {
       console.error('❌ 데이터베이스 상태 확인 오류:', error);
+      
+      // ✅ 3. 에러 발생 시에도 캐시 재확인
+      try {
+        const cachedDocs = await this.firestoreCache.getCachedDocuments();
+        if (cachedDocs && cachedDocs.length > 0) {
+          console.log(`📦 에러 발생, 캐시에서 ${cachedDocs.length}개 문서 발견`);
+          let totalChunks = 0;
+          for (const doc of cachedDocs) {
+            const cachedChunks = await this.firestoreCache.getCachedChunks(doc.id);
+            if (cachedChunks) {
+              totalChunks += cachedChunks.length;
+            }
+          }
+          
+          if (totalChunks > 0) {
+            return {
+              totalChunks,
+              totalDocuments: cachedDocs.length,
+              lastUpdated: new Date().toISOString(),
+              source: 'cache'
+            };
+          }
+        }
+      } catch (cacheError) {
+        console.warn('⚠️ 캐시 확인 중 오류:', cacheError);
+      }
+      
       return {
         totalChunks: 0,
         totalDocuments: 0,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
+        source: 'firestore'
       };
     }
   }
