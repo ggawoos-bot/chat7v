@@ -1644,6 +1644,11 @@ Here is the source material:
   private async initializeWithBackgroundPreloading(): Promise<void> {
     console.log('백그라운드 프리로딩으로 PDF 초기화 시작 - 답변 품질 최우선 보장');
     
+    // ✅ 환경에 따른 PDF 경로 설정 (개발/프로덕션 환경 지원)
+    const isDevelopment = typeof window !== 'undefined' && 
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const PDF_BASE_URL = isDevelopment ? '/pdf/' : '/chat7v/pdf/';
+    
     // PDF 파일 목록 가져오기
     const pdfFiles = await this.getPDFFileList();
     if (pdfFiles.length === 0) {
@@ -1672,7 +1677,7 @@ Here is the source material:
     // 파일 존재 확인 (404 에러 빠른 감지)
     console.log('📋 파일 존재 확인 중...');
     const fileCheckPromises = priorityOrder.map(async (pdfFile) => {
-      const url = '/pdf/' + pdfFile;
+      const url = PDF_BASE_URL + pdfFile; // ✅ 환경에 따른 경로 사용
       const exists = await this.checkFileExists(url);
       return { filename: pdfFile, exists, url };
     });
@@ -1725,7 +1730,7 @@ Here is the source material:
       
       // 배치 병렬 처리
       const batchPromises = batch.map(async (pdfFile) => {
-        return this.parsePdfFromUrl('/pdf/' + pdfFile, true) // ✅ 법령 조항 추출 지연
+        return this.parsePdfFromUrl(PDF_BASE_URL + pdfFile, true) // ✅ 환경에 따른 경로 사용, 법령 조항 추출 지연
           .then(pdfText => {
             if (pdfText && pdfText.trim().length > 0) {
               this.loadingProgress.successfulFiles.push(pdfFile);
