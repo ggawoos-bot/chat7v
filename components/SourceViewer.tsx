@@ -451,20 +451,12 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
   const navigateToSearchResult = (match: PDFChunk, index: number) => {
     // chunksByPage를 사용하여 실제 페이지 번호 찾기
     let targetPage = 1;
-    let targetPageChunks: PDFChunk[] = [];
     for (const [pageNum, pageChunks] of Object.entries(chunksByPage)) {
-      const chunks = pageChunks as PDFChunk[];
-      if (chunks.some(c => c.id === match.id)) {
+      if (pageChunks.some(c => c.id === match.id)) {
         targetPage = parseInt(pageNum);
-        targetPageChunks = chunks;
         break;
       }
     }
-    
-    // 해당 페이지에서 현재 청크의 위치 확인
-    const chunkIndexInPage = targetPageChunks.findIndex(c => c.id === match.id);
-    const totalChunksInPage = targetPageChunks.length;
-    const isInTopHalf = chunkIndexInPage < totalChunksInPage / 2;
     
     // 페이지 변경 시 suppressObserverRef 설정
     suppressObserverRef.current = true;
@@ -481,22 +473,16 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
         const elementRect = el.getBoundingClientRect();
         const scrollTop = container.scrollTop;
         
-        let targetScrollTop: number;
-        
-        if (isInTopHalf) {
-          // 상위 50% 이내: 맨 위로 스크롤
-          targetScrollTop = scrollTop + elementRect.top - containerRect.top;
-        } else {
-          // 하위 50%: 맨 아래로 스크롤
-          const elementBottom = scrollTop + elementRect.top - containerRect.top + elementRect.height;
-          targetScrollTop = elementBottom - containerRect.height;
-        }
+        // 요소가 컨테이너의 중앙에 오도록 스크롤 계산
+        const targetScrollTop = scrollTop + elementRect.top - containerRect.top - (containerRect.height / 2) + (elementRect.height / 2);
         
         // 부드럽게 스크롤
         container.scrollTo({
-          top: Math.max(0, targetScrollTop),
+          top: targetScrollTop,
           behavior: 'smooth'
         });
+        
+        // 하이라이트 효과 제거 (텍스트 색상 변경으로만 표시)
         
         // 스크롤 완료 후 observer 재개
         setTimeout(() => {
@@ -504,10 +490,7 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
         }, 500);
       } else if (el) {
         // scrollContainerRef가 없으면 기본 방법 사용
-        el.scrollIntoView({ 
-          behavior: 'smooth', 
-          block: isInTopHalf ? 'start' : 'end' 
-        });
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         suppressObserverRef.current = false;
       }
     };
@@ -733,62 +716,27 @@ export const SourceViewer: React.FC<SourceViewerProps> = ({
       
       if (highlightedChunk) {
         // 청크의 페이지 번호로 pdfCurrentPage 업데이트
-        let targetPageChunks: PDFChunk[] = [];
         for (const [pageNum, pageChunks] of Object.entries(chunksByPage)) {
-          const chunks = pageChunks as PDFChunk[];
-          if (chunks.some(c => c.id === highlightedChunkId)) {
+          if (pageChunks.some(c => c.id === highlightedChunkId)) {
             const actualPage = parseInt(pageNum);
             if (actualPage !== pdfCurrentPage && onPdfPageChange) {
               onPdfPageChange(actualPage);
             }
-            targetPageChunks = chunks;
             break;
           }
         }
         
-        // 해당 페이지에서 현재 청크의 위치 확인
-        const chunkIndexInPage = targetPageChunks.findIndex(c => c.id === highlightedChunkId);
-        const totalChunksInPage = targetPageChunks.length;
-        const isInTopHalf = chunkIndexInPage < totalChunksInPage / 2;
-        
         // 페이지 이동 후 하이라이트
         setTimeout(() => {
           const element = window.document.getElementById(`chunk-${highlightedChunkId}`);
-          const container = scrollContainerRef.current;
-          
-          if (element && container) {
+          if (element) {
             // 기존 타이머 정리
             if (highlightTimeoutRef.current) {
               clearTimeout(highlightTimeoutRef.current);
             }
             
-            // 스크롤 컨테이너 내에서 요소의 위치 계산
-            const containerRect = container.getBoundingClientRect();
-            const elementRect = element.getBoundingClientRect();
-            const scrollTop = container.scrollTop;
-            
-            let targetScrollTop: number;
-            
-            if (isInTopHalf) {
-              // 상위 50% 이내: 맨 위로 스크롤
-              targetScrollTop = scrollTop + elementRect.top - containerRect.top;
-            } else {
-              // 하위 50%: 맨 아래로 스크롤
-              const elementBottom = scrollTop + elementRect.top - containerRect.top + elementRect.height;
-              targetScrollTop = elementBottom - containerRect.height;
-            }
-            
-            // 부드럽게 스크롤
-            container.scrollTo({
-              top: Math.max(0, targetScrollTop),
-              behavior: 'smooth'
-            });
-          } else if (element) {
-            // scrollContainerRef가 없으면 기본 방법 사용
-            element.scrollIntoView({ 
-              behavior: 'smooth', 
-              block: isInTopHalf ? 'start' : 'end' 
-            });
+            // 스크롤만 수행 (노란색 하이라이트 효과 제거)
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
         }, 100);
       }
