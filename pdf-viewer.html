@@ -566,104 +566,182 @@
       const textSpans = textLayer.querySelectorAll('span');
       let highlightCount = 0;
       
-      // ✅ 1단계: 검색 텍스트로 정확한 매칭 (공백 구분 검색어 지원)
+      // ✅ 1단계: 검색 텍스트로 정확한 매칭 (하이브리드 접근)
       if (searchText && searchText.trim().length > 0) {
-        // ✅ 공백으로 구분된 검색어 파싱
-        const searchQueries = searchText
-          .split(/\s+/) // 공백(연속 공백 포함)으로 분할
-          .map(q => q.trim())
-          .filter(q => q.length >= 2) // 최소 2자 이상
-          .map(q => q.toLowerCase());
+        const trimmedSearchText = searchText.trim();
+        const textLength = trimmedSearchText.length;
         
-        if (searchQueries.length > 0) {
-          const isMultiSearch = searchQueries.length > 1;
+        console.log(`🔍 검색 텍스트 길이: ${textLength}자`);
+        
+        // ✅ 길이에 따라 다른 전략 사용
+        if (textLength >= 30) {
+          // 긴 문장: 핵심 키워드 추출 또는 정확한 매칭
+          const coreText = trimmedSearchText.substring(0, 35).trim();
           
-          if (isMultiSearch) {
-            // ✅ 복수 검색어: 각 검색어를 모두 하이라이트
-            textSpans.forEach((span) => {
-              const text = (span.textContent || '').toLowerCase();
-              if (!text.trim()) return;
-              
-              // 모든 검색어 중 하나라도 포함되면 하이라이트
-              for (const query of searchQueries) {
-                if (text.includes(query)) {
-                  span.classList.add('highlight-strong');
-                  highlightCount++;
-                  break; // 하나만 찾으면 충분 (중복 방지)
-                }
-              }
+          // 핵심 키워드 추출 (베란다, 테라스, 옥상 등)
+          const keyPhrases = ['베란다', '테라스', '옥상', '금연구역', '건축물', '부속물', '공중이용시설'];
+          const foundKeyPhrases = keyPhrases.filter(phrase => 
+            trimmedSearchText.includes(phrase)
+          );
+          
+          console.log(`🔍 발견된 핵심 키워드:`, foundKeyPhrases);
+          
+          if (foundKeyPhrases.length >= 2) {
+            // 핵심 키워드가 2개 이상 포함된 경우: 키워드 기반 하이라이트
+            const allText = Array.from(textSpans).map(s => s.textContent || '').join('');
+            const sentenceRegex = /([^.。!！?？\n]+[.。!！?？\n]+)/g;
+            let match;
+            const spanArray = Array.from(textSpans);
+            
+            // span 위치 계산
+            const spanPositions = [];
+            let currentPos = 0;
+            spanArray.forEach(span => {
+              const spanText = span.textContent || '';
+              spanPositions.push({
+                span: span,
+                start: currentPos,
+                end: currentPos + spanText.length
+              });
+              currentPos += spanText.length;
             });
             
-            if (highlightCount > 0) {
-              console.log(`✅ 복수 검색어 하이라이트 적용 완료: ${highlightCount}개 요소 (${searchQueries.length}개 검색어)`);
-              return; // 검색 텍스트로 하이라이트했으면 키워드 하이라이트는 스킵
-            }
-          } else {
-            // 단일 검색어: 기존 로직 (더 정확한 매칭)
-            const trimmedSearchText = searchText.trim();
-            // 검색어가 긴 경우(20자 이상) 핵심 부분만 사용, 짧은 경우 전체 사용
-            const coreText = trimmedSearchText.length >= 20 
-              ? trimmedSearchText.substring(0, 25).trim()
-              : trimmedSearchText;
-            
-            if (coreText.length >= 3) {
-              // 연속된 span들을 합쳐서 텍스트 생성
-              let accumulatedText = '';
-              let accumulatedSpans = [];
-              let foundMatch = false;
+            while ((match = sentenceRegex.exec(allText)) !== null) {
+              const sentenceText = match[0];
+              const normalizedSentence = sentenceText.toLowerCase();
+              const sentenceStart = match.index;
+              const sentenceEnd = sentenceStart + sentenceText.length;
               
-              textSpans.forEach((span) => {
-                const text = span.textContent || '';
-                if (text.trim()) {
-                  accumulatedText += text;
-                  accumulatedSpans.push(span);
-                  
-                  // 누적된 텍스트가 검색 텍스트를 포함하면 하이라이트
-                  if (accumulatedText.toLowerCase().includes(coreText.toLowerCase())) {
-                    foundMatch = true;
-                    // 검색어 길이의 2배 이내일 때만 하이라이트 (과도한 하이라이트 방지)
-                    const maxLength = coreText.length * 2.5;
-                    if (accumulatedText.length <= maxLength) {
-                      accumulatedSpans.forEach(s => {
-                        s.classList.add('highlight-strong');
-                        highlightCount++;
-                      });
-                    } else {
-                      // 너무 길면 검색어가 포함된 부분만 하이라이트
-                      accumulatedSpans.forEach(s => {
-                        const spanText = s.textContent || '';
-                        if (spanText.toLowerCase().includes(coreText.toLowerCase())) {
-                          s.classList.add('highlight-strong');
-                          highlightCount++;
-                        }
-                      });
-                    }
-                    accumulatedText = '';
-                    accumulatedSpans = [];
-                  }
-                  
-                  // 텍스트가 너무 길어지면 리셋 (검색어의 3배 이상)
-                  if (accumulatedText.length > coreText.length * 3) {
-                    accumulatedText = '';
-                    accumulatedSpans = [];
-                  }
-                }
-              });
+              // 핵심 키워드 중 2개 이상 포함된 문장만 하이라이트
+              const matchedCount = foundKeyPhrases.filter(phrase => 
+                normalizedSentence.includes(phrase)
+              ).length;
               
-              // 검색어가 각 span에 직접 포함되어 있는 경우도 하이라이트
-              if (!foundMatch || highlightCount === 0) {
-                textSpans.forEach((span) => {
-                  const text = (span.textContent || '').toLowerCase();
-                  if (text.includes(coreText.toLowerCase())) {
+              if (matchedCount >= 2) {
+                console.log(`✅ 매칭 문장 발견 (${matchedCount}개 키워드): ${sentenceText.substring(0, 50)}...`);
+                
+                spanPositions.forEach(({ span, start, end }) => {
+                  if (start < sentenceEnd && end > sentenceStart) {
                     span.classList.add('highlight-strong');
                     highlightCount++;
                   }
                 });
               }
+            }
+            
+            if (highlightCount > 0) {
+              console.log(`✅ 핵심 키워드 기반 하이라이트 완료: ${highlightCount}개 요소`);
+              return;
+            }
+          } else {
+            // 핵심 키워드가 적은 경우: 정확한 매칭
+            console.log(`🔍 핵심 키워드 부족, 정확한 매칭 시도: ${coreText}`);
+            
+            let accumulatedText = '';
+            let accumulatedSpans = [];
+            let foundMatch = false;
+            
+            textSpans.forEach((span) => {
+              const text = span.textContent || '';
+              if (text.trim()) {
+                accumulatedText += text;
+                accumulatedSpans.push(span);
+                
+                if (accumulatedText.toLowerCase().includes(coreText.toLowerCase())) {
+                  foundMatch = true;
+                  const maxLength = coreText.length * 1.5;
+                  if (accumulatedText.length <= maxLength) {
+                    accumulatedSpans.forEach(s => {
+                      s.classList.add('highlight-strong');
+                      highlightCount++;
+                    });
+                  }
+                  accumulatedText = '';
+                  accumulatedSpans = [];
+                }
+                
+                if (accumulatedText.length > coreText.length * 2) {
+                  accumulatedText = '';
+                  accumulatedSpans = [];
+                }
+              }
+            });
+            
+            if (foundMatch && highlightCount > 0) {
+              console.log(`✅ 정확한 매칭 하이라이트 완료: ${highlightCount}개 요소`);
+              return;
+            }
+          }
+        } else if (textLength >= 10) {
+          // 중간 길이: 정확한 매칭
+          const coreText = trimmedSearchText.length >= 20 
+            ? trimmedSearchText.substring(0, 25).trim()
+            : trimmedSearchText;
+          
+          if (coreText.length >= 3) {
+            let accumulatedText = '';
+            let accumulatedSpans = [];
+            let foundMatch = false;
+            
+            textSpans.forEach((span) => {
+              const text = span.textContent || '';
+              if (text.trim()) {
+                accumulatedText += text;
+                accumulatedSpans.push(span);
+                
+                if (accumulatedText.toLowerCase().includes(coreText.toLowerCase())) {
+                  foundMatch = true;
+                  const maxLength = coreText.length * 2.5;
+                  if (accumulatedText.length <= maxLength) {
+                    accumulatedSpans.forEach(s => {
+                      s.classList.add('highlight-strong');
+                      highlightCount++;
+                    });
+                  }
+                  accumulatedText = '';
+                  accumulatedSpans = [];
+                }
+                
+                if (accumulatedText.length > coreText.length * 3) {
+                  accumulatedText = '';
+                  accumulatedSpans = [];
+                }
+              }
+            });
+            
+            if (foundMatch && highlightCount > 0) {
+              console.log(`✅ 검색 텍스트 하이라이트 적용 완료: ${highlightCount}개 요소`);
+              return;
+            }
+          }
+        } else {
+          // 짧은 검색어: 공백 분리 지원
+          const searchQueries = trimmedSearchText
+            .split(/\s+/)
+            .map(q => q.trim())
+            .filter(q => q.length >= 2)
+            .map(q => q.toLowerCase());
+          
+          if (searchQueries.length > 0) {
+            const isMultiSearch = searchQueries.length > 1;
+            
+            if (isMultiSearch) {
+              textSpans.forEach((span) => {
+                const text = (span.textContent || '').toLowerCase();
+                if (!text.trim()) return;
+                
+                for (const query of searchQueries) {
+                  if (text.includes(query)) {
+                    span.classList.add('highlight-strong');
+                    highlightCount++;
+                    break;
+                  }
+                }
+              });
               
               if (highlightCount > 0) {
-                console.log(`✅ 검색 텍스트 하이라이트 적용 완료: ${highlightCount}개 요소`);
-                return; // 검색 텍스트로 하이라이트했으면 키워드 하이라이트는 스킵
+                console.log(`✅ 복수 검색어 하이라이트 적용 완료: ${highlightCount}개 요소`);
+                return;
               }
             }
           }
