@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PDF 뷰어</title>
+  <!-- PDF 검색 메시지 핸들러 -->
+  <script src="../utils/pdfSearchMessageHandler.js" defer></script>
   <style>
     * {
       margin: 0;
@@ -1428,153 +1430,7 @@
       }
     }
     
-    // 검색 함수: 전체 PDF에서 검색어 찾기 (공백 구분 AND 조건 지원)
-    async function performSearch(searchText) {
-      if (!pdfDoc || !searchText || !searchText.trim()) {
-        console.log('⚠️ 검색할 수 없습니다:', { pdfDoc: !!pdfDoc, searchText });
-        return;
-      }
-      
-      // ✅ 개선: 공백으로 구분된 검색어 파싱 (AND 조건) + 텍스트 정규화
-      const searchQueries = searchText
-        .split(/\s+/) // 공백(연속 공백 포함)으로 분할
-        .map(q => q.trim())
-        .filter(q => q.length > 0)
-        .map(q => normalizeTextForMatching(q)); // ✅ 텍스트 정규화 적용
-      
-      // 단일 검색어인지 복수 검색어인지 확인
-      const isMultiSearch = searchQueries.length > 1;
-      
-      console.log(`🔍 검색 시작: ${isMultiSearch ? '복수 검색어 (AND 조건)' : '단일 검색어'}`, searchQueries);
-      
-      currentSearchText = searchText.trim(); // 원본 텍스트 유지 (하이라이트용)
-      searchResults = [];
-      currentSearchIndex = -1;
-      
-      // 검색 버튼 비활성화
-      searchButton.disabled = true;
-      searchButton.textContent = '검색중...';
-      
-      try {
-        // ✅ 개선: 현재 페이지부터 검색 시작
-        const startPage = currentPage || 1;
-        
-        // 현재 페이지부터 끝까지 검색
-        for (let i = 0; i < numPages; i++) {
-          const pageNum = ((startPage - 1 + i) % numPages) + 1;
-          
-          try {
-            const page = await pdfDoc.getPage(pageNum);
-            const textContent = await page.getTextContent();
-            
-            // 페이지의 모든 텍스트 합치기
-            let fullText = '';
-            textContent.items.forEach(item => {
-              if (item.str) {
-                fullText += item.str + ' ';
-              }
-            });
-            
-            // ✅ 개선: PDF 텍스트도 정규화
-            const normalizedText = normalizeTextForMatching(fullText);
-            
-            if (isMultiSearch) {
-              // ✅ 복수 검색어: 모든 검색어가 같은 페이지에 포함된 경우만 찾기 (AND 조건)
-              const allKeywordsFound = searchQueries.every(query => 
-                normalizedText.includes(query)
-              );
-              
-              if (allKeywordsFound) {
-                // ✅ 개선: 모든 검색어가 포함된 페이지를 페이지 단위로 저장
-                // 각 검색어의 첫 번째 위치를 찾아서 저장
-                const firstPositions = {};
-                let minPosition = Infinity;
-                let maxPosition = -1;
-                
-                searchQueries.forEach(query => {
-                  const index = normalizedText.indexOf(query);
-                  if (index !== -1) {
-                    firstPositions[query] = index;
-                    minPosition = Math.min(minPosition, index);
-                    maxPosition = Math.max(maxPosition, index + query.length);
-                  }
-                });
-                
-                // 페이지 단위 결과 저장 (모든 검색어가 포함된 페이지)
-                searchResults.push({
-                  page: pageNum,
-                  index: 0, // 페이지당 하나의 결과
-                  query: searchQueries.join(' '), // 모든 검색어
-                  position: minPosition, // 첫 번째 검색어 위치
-                  allQueries: searchQueries, // 모든 검색어 목록
-                  positions: firstPositions // 각 검색어의 위치
-                });
-                
-                console.log(`✅ 페이지 ${pageNum}: 모든 검색어 발견 (${searchQueries.length}개 단어)`);
-              }
-            } else {
-              // 단일 검색어: 모든 매칭 위치 찾기
-              const query = searchQueries[0];
-              let index = normalizedText.indexOf(query);
-              let resultIndex = 0;
-              
-              while (index !== -1) {
-                searchResults.push({
-                  page: pageNum,
-                  index: resultIndex,
-                  query: query,
-                  position: index
-                });
-                resultIndex++;
-                index = normalizedText.indexOf(query, index + 1);
-              }
-            }
-          } catch (error) {
-            console.warn(`⚠️ 페이지 ${pageNum} 검색 중 오류:`, error);
-          }
-        }
-        
-        // ✅ 검색 결과를 페이지 번호와 위치 순으로 정렬
-        searchResults.sort((a, b) => {
-          if (a.page !== b.page) {
-            // 페이지 번호 순 (현재 페이지 기준 순환)
-            const aPageOrder = ((a.page - startPage + numPages) % numPages);
-            const bPageOrder = ((b.page - startPage + numPages) % numPages);
-            return aPageOrder - bPageOrder;
-          }
-          // 같은 페이지면 위치 순
-          return a.position - b.position;
-        });
-        
-        // ✅ 검색 결과 통계
-        const uniquePages = new Set(searchResults.map(r => r.page));
-        const resultCount = isMultiSearch ? uniquePages.size : searchResults.length;
-        const resultType = isMultiSearch ? '페이지' : '결과';
-        
-        console.log(`✅ 검색 완료: ${resultCount}개 ${resultType} 발견 (${searchQueries.length}개 검색어)`);
-        
-        // 검색 결과 UI 업데이트
-        if (searchResults.length > 0) {
-          currentSearchIndex = 0;
-          searchNav.style.display = 'flex';
-          updateSearchNav();
-          // 첫 번째 결과로 이동
-          navigateToSearchResult(0);
-        } else {
-          searchNav.style.display = 'none';
-          alert(isMultiSearch 
-            ? `모든 검색어(${searchQueries.join(' ')})가 같은 페이지에 포함된 경우를 찾을 수 없습니다.`
-            : '검색 결과를 찾을 수 없습니다.'
-          );
-        }
-      } catch (error) {
-        console.error('❌ 검색 오류:', error);
-        alert('검색 중 오류가 발생했습니다.');
-      } finally {
-        searchButton.disabled = false;
-        searchButton.textContent = '검색';
-      }
-    }
+    // ✅ performSearch 함수는 제거되었습니다. 검색 이벤트는 pdfSearchMessageHandler.js에서 처리합니다.
     
     // 검색 결과로 이동
     function navigateToSearchResult(index) {
@@ -1849,9 +1705,6 @@
       }
     }, { passive: false }); // passive: false로 설정하여 preventDefault 가능하게 함
   </script>
-  
-  <!-- PDF 검색 메시지 핸들러 -->
-  <script src="../utils/pdfSearchMessageHandler.js"></script>
 </body>
 </html>
 

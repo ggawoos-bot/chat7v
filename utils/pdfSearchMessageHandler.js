@@ -10,22 +10,37 @@ class PdfSearchMessageHandler {
   }
 
   /**
-   * 초기화 - PDF 뷰어가 로드될 때까지 대기 후 이벤트 리스너 등록
+   * 초기화 - 즉시 실행 시도 + 폴백
    */
   init() {
-    // DOM이 로드될 때까지 대기
+    // 즉시 실행 시도
+    this.trySetupEventListeners();
+    
+    // DOM이 로드되지 않았으면 DOMContentLoaded 대기
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => this.setupEventListeners());
-    } else {
-      this.setupEventListeners();
+      document.addEventListener('DOMContentLoaded', () => this.trySetupEventListeners());
     }
   }
 
   /**
-   * 이벤트 리스너 설정
+   * 이벤트 리스너 설정 시도 (즉시 실행 + 짧은 간격 재시도)
    */
-  setupEventListeners() {
-    // PDF 뷰어의 요소들이 로드될 때까지 대기
+  trySetupEventListeners() {
+    // 이미 초기화되었으면 중단
+    if (this.isInitialized) return;
+    
+    const searchInput = document.getElementById('search-input');
+    const searchButton = document.getElementById('search-button');
+
+    if (searchInput && searchButton) {
+      // 요소를 찾았으면 즉시 이벤트 리스너 등록
+      this.attachEventListeners(searchInput, searchButton);
+      this.isInitialized = true;
+      console.log('✅ PDF 검색 메시지 핸들러 초기화 완료');
+      return;
+    }
+
+    // 요소를 찾지 못했으면 짧은 간격으로 재시도 (10ms)
     const checkInterval = setInterval(() => {
       const searchInput = document.getElementById('search-input');
       const searchButton = document.getElementById('search-button');
@@ -34,17 +49,17 @@ class PdfSearchMessageHandler {
         clearInterval(checkInterval);
         this.attachEventListeners(searchInput, searchButton);
         this.isInitialized = true;
-        console.log('✅ PDF 검색 메시지 핸들러 초기화 완료');
+        console.log('✅ PDF 검색 메시지 핸들러 초기화 완료 (재시도)');
       }
-    }, 100);
+    }, 10); // 100ms -> 10ms로 변경
 
-    // 10초 후에도 초기화되지 않으면 중단
+    // 5초 후에도 초기화되지 않으면 중단 (10초 -> 5초로 단축)
     setTimeout(() => {
       clearInterval(checkInterval);
       if (!this.isInitialized) {
         console.warn('⚠️ PDF 검색 메시지 핸들러 초기화 실패: 검색 요소를 찾을 수 없습니다.');
       }
-    }, 10000);
+    }, 5000);
   }
 
   /**
