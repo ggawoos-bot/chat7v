@@ -56,15 +56,27 @@ class PdfSearchMessageHandler {
       if (e.key === 'Enter') {
         const searchText = searchInput.value.trim();
         if (searchText) {
+          // 기존 이벤트 전파 차단
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          
+          // 새로운 로직 실행
           this.showSearchMessage(searchText, 'Enter 키');
         }
       }
     }, true); // capture phase에서 실행하여 기존 이벤트보다 먼저 실행
 
     // 검색 버튼 클릭 이벤트 리스너 추가
-    searchButton.addEventListener('click', () => {
+    searchButton.addEventListener('click', (e) => {
       const searchText = searchInput.value.trim();
       if (searchText) {
+        // 기존 이벤트 전파 차단
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        
+        // 새로운 로직 실행
         this.showSearchMessage(searchText, '검색 버튼');
       }
     }, true); // capture phase에서 실행하여 기존 이벤트보다 먼저 실행
